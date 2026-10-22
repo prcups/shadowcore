@@ -1,0 +1,416 @@
+{
+  "schema_version": 1,
+  "import_date": "2026-10-22",
+  "scope": "All 24 missing direct subprojects declared by the existing QEMU .wrap files. Excludes roms/ firmware submodules and transitive Cargo dependencies.",
+  "method": "Pinned source archives, not Git checkouts. wrap-file SHA-256 values verified. Git archives addressed by the exact wrap revision; archive hashes recorded. Existing packagefiles overlays applied.",
+  "git_metadata": "No .git directories were created. Git control files listed per subproject were omitted on initial import. No gitlinks or submodule registrations are used.",
+  "tree_digest_algorithm": "Files sorted by relative POSIX path; for each, append UTF-8 path, a NUL byte, then the binary SHA-256 digest of its bytes to a SHA-256 accumulator.",
+  "subprojects": [
+    {
+      "wrap": "anyhow-1-rs.wrap",
+      "directory": "anyhow-1.0.98",
+      "kind": "wrap-file",
+      "source_url": "https://crates.io/api/v1/crates/anyhow/1.0.98/download",
+      "archive_sha256": "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487",
+      "archive_root": "anyhow-1.0.98",
+      "removed_git_files": [
+        ".gitignore"
+      ],
+      "overlay_files": [
+        "meson.build"
+      ],
+      "source_hash": "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487",
+      "file_count": 54,
+      "source_tree_sha256": "e086fb2122c8c0c8f94c8db053fefb6fc03db6f737b5c8152b2cf6e7a3c7f55f"
+    },
+    {
+      "wrap": "arbitrary-int-1-rs.wrap",
+      "directory": "arbitrary-int-1.2.7",
+      "kind": "wrap-file",
+      "source_url": "https://crates.io/api/v1/crates/arbitrary-int/1.2.7/download",
+      "archive_sha256": "c84fc003e338a6f69fbd4f7fe9f92b535ff13e9af8997f3b14b6ddff8b1df46d",
+      "archive_root": "arbitrary-int-1.2.7",
+      "removed_git_files": [
+        ".gitignore"
+      ],
+      "overlay_files": [
+        "meson.build"
+      ],
+      "source_hash": "c84fc003e338a6f69fbd4f7fe9f92b535ff13e9af8997f3b14b6ddff8b1df46d",
+      "file_count": 15,
+      "source_tree_sha256": "459a9fe876754904ab5e987397d984cde8ca5c2376df116a62f402ba8708e834"
+    },
+    {
+      "wrap": "attrs-0.2-rs.wrap",
+      "directory": "attrs-0.2.9",
+      "kind": "wrap-file",
+      "source_url": "https://crates.io/api/v1/crates/attrs/0.2.9/download",
+      "archive_sha256": "2a207d40f43de65285f3de0509bb6cb16bc46098864fce957122bbacce327e5f",
+      "archive_root": "attrs-0.2.9",
+      "removed_git_files": [
+        ".gitignore"
+      ],
+      "overlay_files": [
+        "meson.build"
+      ],
+      "source_hash": "2a207d40f43de65285f3de0509bb6cb16bc46098864fce957122bbacce327e5f",
+      "file_count": 7,
+      "source_tree_sha256": "5bc729afccdf5abff6cef4c3ed7179bf2ccbffbccfece96f5534dce79afee4af"
+    },
+    {
+      "wrap": "berkeley-softfloat-3.wrap",
+      "directory": "berkeley-softfloat-3",
+      "kind": "wrap-git",
+      "source_url": "https://gitlab.com/qemu-project/berkeley-softfloat-3/-/archive/b64af41c3276f97f0e181920400ee056b9c88037/berkeley-softfloat-3-b64af41c3276f97f0e181920400ee056b9c88037.tar.gz",
+      "archive_sha256": "faae889814ea6a292f7ca03d9b36e6c7e95bab2a64777804883cc822b8d48757",
+      "archive_root": "berkeley-softfloat-3-b64af41c3276f97f0e181920400ee056b9c88037",
+      "removed_git_files": [
+        ".gitignore"
+      ],
+      "overlay_files": [
+        "meson.build",
+        "meson_options.txt"
+      ],
+      "repository": "https://gitlab.com/qemu-project/berkeley-softfloat-3.git",
+      "revision": "b64af41c3276f97f0e181920400ee056b9c88037",
+      "file_count": 479,
+      "source_tree_sha256": "2087788e7e58ec68ecf8964dcc7d193e4936c184ecb750ea2d9dc46107983c0a"
+    },
+    {
+      "wrap": "berkeley-testfloat-3.wrap",
+      "directory": "berkeley-testfloat-3",
+      "kind": "wrap-git",
+      "source_url": "https://gitlab.com/qemu-project/berkeley-testfloat-3/-/archive/e7af9751d9f9fd3b47911f51a5cfd08af256a9ab/berkeley-testfloat-3-e7af9751d9f9fd3b47911f51a5cfd08af256a9ab.tar.gz",
+      "archive_sha256": "e7a09d51dc7e96cb8422c919c85fc3833d4f788567638c9162ef5cd7db59b1df",
+      "archive_root": "berkeley-testfloat-3-e7af9751d9f9fd3b47911f51a5cfd08af256a9ab",
+      "removed_git_files": [
+        ".gitignore"
+      ],
+      "overlay_files": [
+        "meson.build",
+        "meson_options.txt"
+      ],
+      "repository": "https://gitlab.com/qemu-project/berkeley-testfloat-3.git",
+      "revision": "e7af9751d9f9fd3b47911f51a5cfd08af256a9ab",
+      "file_count": 207,
+      "source_tree_sha256": "72667baafe84dac03b2fe05f62c7ca9ff961145a46ee9f986ba8f620aa503f43"
+    },
+    {
+      "wrap": "bilge-0.2-rs.wrap",
+      "directory": "bilge-0.2.0",
+      "kind": "wrap-file",
+      "source_url": "https://crates.io/api/v1/crates/bilge/0.2.0/download",
+      "archive_sha256": "dc707ed8ebf81de5cd6c7f48f54b4c8621760926cdf35a57000747c512e67b57",
+      "archive_root": "bilge-0.2.0",
+      "removed_git_files": [],
+      "overlay_files": [
+        "meson.build"
+      ],
+      "source_hash": "dc707ed8ebf81de5cd6c7f48f54b4c8621760926cdf35a57000747c512e67b57",
+      "file_count": 9,
+      "source_tree_sha256": "be827544bd83620d0e51933405d243a9ae55e700ea7ea4722ff7c5258ab7e0b1"
+    },
+    {
+      "wrap": "bilge-impl-0.2-rs.wrap",
+      "directory": "bilge-impl-0.2.0",
+      "kind": "wrap-file",
+      "source_url": "https://crates.io/api/v1/crates/bilge-impl/0.2.0/download",
+      "archive_sha256": "feb11e002038ad243af39c2068c8a72bcf147acf05025dcdb916fcc000adb2d8",
+      "archive_root": "bilge-impl-0.2.0",
+      "removed_git_files": [],
+      "overlay_files": [
+        "meson.build"
+      ],
+      "source_hash": "feb11e002038ad243af39c2068c8a72bcf147acf05025dcdb916fcc000adb2d8",
+      "file_count": 19,
+      "source_tree_sha256": "2c369ae87f91968b18f104f500fdf6106ee59ecc8efe546d2c5e85bb1ce57b94"
+    },
+    {
+      "wrap": "dtc.wrap",
+      "directory": "dtc",
+      "kind": "wrap-git",
+      "source_url": "https://gitlab.com/qemu-project/dtc/-/archive/b6910bec11614980a21e46fbccc35934b671bd81/dtc-b6910bec11614980a21e46fbccc35934b671bd81.tar.gz",
+      "archive_sha256": "e115f987eec23a1ba25150a46ced1675de3716072d3b4905afb3a9cda0f007c7",
+      "archive_root": "dtc-b6910bec11614980a21e46fbccc35934b671bd81",
+      "removed_git_files": [
+        ".gitignore",
+        "libfdt/.gitignore",
+        "pylibfdt/.gitignore",
+        "tests/.gitignore"
+      ],
+      "overlay_files": [],
+      "repository": "https://gitlab.com/qemu-project/dtc.git",
+      "revision": "b6910bec11614980a21e46fbccc35934b671bd81",
+      "file_count": 306,
+      "source_tree_sha256": "3607f06815ffb88e0f6f22bb3b0accb99bf339dbe372e80255ec673e08a1b19f"
+    },
+    {
+      "wrap": "either-1-rs.wrap",
+      "directory": "either-1.12.0",
+      "kind": "wrap-file",
+      "source_url": "https://crates.io/api/v1/crates/either/1.12.0/download",
+      "archive_sha256": "3dca9240753cf90908d7e4aac30f630662b02aebaa1b58a3cadabdb23385b58b",
+      "archive_root": "either-1.12.0",
+      "removed_git_files": [
+        ".gitignore"
+      ],
+      "overlay_files": [
+        "meson.build"
+      ],
+      "source_hash": "3dca9240753cf90908d7e4aac30f630662b02aebaa1b58a3cadabdb23385b58b",
+      "file_count": 14,
+      "source_tree_sha256": "f618954a9bc098e921a3a194c713016a4f6d51078a6f0bf32596e5eeea930592"
+    },
+    {
+      "wrap": "foreign-0.3-rs.wrap",
+      "directory": "foreign-0.3.1",
+      "kind": "wrap-file",
+      "source_url": "https://crates.io/api/v1/crates/foreign/0.3.1/download",
+      "archive_sha256": "17ca1b5be8c9d320daf386f1809c7acc0cb09accbae795c2001953fa50585846",
+      "archive_root": "foreign-0.3.1",
+      "removed_git_files": [
+        ".gitignore"
+      ],
+      "overlay_files": [
+        "meson.build"
+      ],
+      "source_hash": "17ca1b5be8c9d320daf386f1809c7acc0cb09accbae795c2001953fa50585846",
+      "file_count": 23,
+      "source_tree_sha256": "533ed63b5e0617acf6058a1cc3b7599ff6c12d7ab52fca1368f21b40cb7e4a6c"
+    },
+    {
+      "wrap": "glib-sys-0.21-rs.wrap",
+      "directory": "glib-sys-0.21.2",
+      "kind": "wrap-file",
+      "source_url": "https://crates.io/api/v1/crates/glib-sys/0.21.2/download",
+      "archive_sha256": "d09d3d0fddf7239521674e57b0465dfbd844632fec54f059f7f56112e3f927e1",
+      "archive_root": "glib-sys-0.21.2",
+      "removed_git_files": [],
+      "overlay_files": [
+        "meson.build"
+      ],
+      "source_hash": "d09d3d0fddf7239521674e57b0465dfbd844632fec54f059f7f56112e3f927e1",
+      "file_count": 15,
+      "source_tree_sha256": "06883dcb4bcf2d5928b599c8d07a58101d5e4f81e72dd4527ae478d3307016c3"
+    },
+    {
+      "wrap": "itertools-0.11-rs.wrap",
+      "directory": "itertools-0.11.0",
+      "kind": "wrap-file",
+      "source_url": "https://crates.io/api/v1/crates/itertools/0.11.0/download",
+      "archive_sha256": "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57",
+      "archive_root": "itertools-0.11.0",
+      "removed_git_files": [
+        ".gitignore"
+      ],
+      "overlay_files": [
+        "meson.build"
+      ],
+      "source_hash": "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57",
+      "file_count": 83,
+      "source_tree_sha256": "6ad015b8e8faef85e08aa2f93992926e3079bff1b94888aac954f8b7d304ea17"
+    },
+    {
+      "wrap": "keycodemapdb.wrap",
+      "directory": "keycodemapdb",
+      "kind": "wrap-git",
+      "source_url": "https://gitlab.com/qemu-project/keycodemapdb/-/archive/f5772a62ec52591ff6870b7e8ef32482371f22c6/keycodemapdb-f5772a62ec52591ff6870b7e8ef32482371f22c6.tar.gz",
+      "archive_sha256": "d014b53382dbb17b8196ad12f50de7f20d0ef1b9f7d54b0be51a6cbb14209195",
+      "archive_root": "keycodemapdb-f5772a62ec52591ff6870b7e8ef32482371f22c6",
+      "removed_git_files": [],
+      "overlay_files": [],
+      "repository": "https://gitlab.com/qemu-project/keycodemapdb.git",
+      "revision": "f5772a62ec52591ff6870b7e8ef32482371f22c6",
+      "file_count": 17,
+      "source_tree_sha256": "ca9b596d3cb73edff7356acde81c3861be6e1b6c419e7cb747d99fb85ac29d80"
+    },
+    {
+      "wrap": "libblkio.wrap",
+      "directory": "libblkio",
+      "kind": "wrap-git",
+      "source_url": "https://gitlab.com/libblkio/libblkio/-/archive/f84cc963a444e4cb34813b2dcfc5bf8526947dc0/libblkio-f84cc963a444e4cb34813b2dcfc5bf8526947dc0.tar.gz",
+      "archive_sha256": "b60d1d755a7cdc5f671727a611b0fab9eef1982c8be7c05befacb5ed26a740c5",
+      "archive_root": "libblkio-f84cc963a444e4cb34813b2dcfc5bf8526947dc0",
+      "removed_git_files": [
+        ".gitignore",
+        "blkio/.gitignore",
+        "virtio-driver/.gitignore"
+      ],
+      "overlay_files": [],
+      "repository": "https://gitlab.com/libblkio/libblkio",
+      "revision": "f84cc963a444e4cb34813b2dcfc5bf8526947dc0",
+      "file_count": 103,
+      "source_tree_sha256": "73945b62dddc79f7c6e5aa82d6c26ffd8c735077501ed68287e86aa64d0293eb"
+    },
+    {
+      "wrap": "libc-0.2-rs.wrap",
+      "directory": "libc-0.2.162",
+      "kind": "wrap-file",
+      "source_url": "https://crates.io/api/v1/crates/libc/0.2.162/download",
+      "archive_sha256": "18d287de67fe55fd7e1581fe933d965a5a9477b38e949cfa9f8574ef01506398",
+      "archive_root": "libc-0.2.162",
+      "removed_git_files": [
+        ".gitignore"
+      ],
+      "overlay_files": [
+        "meson.build"
+      ],
+      "source_hash": "18d287de67fe55fd7e1581fe933d965a5a9477b38e949cfa9f8574ef01506398",
+      "file_count": 250,
+      "source_tree_sha256": "2911a77695fdf42b604c7b72c7328dbce21938dfcbea82d89fa8d71a2059edf8"
+    },
+    {
+      "wrap": "libvfio-user.wrap",
+      "directory": "libvfio-user",
+      "kind": "wrap-git",
+      "source_url": "https://gitlab.com/qemu-project/libvfio-user/-/archive/4d9f663450fa80ff375612dbbafe073700e3d3d8/libvfio-user-4d9f663450fa80ff375612dbbafe073700e3d3d8.tar.gz",
+      "archive_sha256": "842d5b33f677d509037a0ffbcbaa31e866ad1e9ba4f731a2f8a6923465722321",
+      "archive_root": "libvfio-user-4d9f663450fa80ff375612dbbafe073700e3d3d8",
+      "removed_git_files": [
+        ".gitignore",
+        ".gitmodules",
+        "test/py/.gitignore"
+      ],
+      "overlay_files": [],
+      "repository": "https://gitlab.com/qemu-project/libvfio-user.git",
+      "revision": "4d9f663450fa80ff375612dbbafe073700e3d3d8",
+      "file_count": 110,
+      "source_tree_sha256": "2a3fd75d1ab8e5c5a0373c55198ebdec4081ac2817f22763694166d4b0eb9e5f"
+    },
+    {
+      "wrap": "probe-0.5-rs.wrap",
+      "directory": "probe-0.5.2",
+      "kind": "wrap-file",
+      "source_url": "https://crates.io/api/v1/crates/probe/0.5.2/download",
+      "archive_sha256": "136558b6e1ebaecc92755d0ffaf9421f519531bed30cc2ad23b22cb00965cc5e",
+      "archive_root": "probe-0.5.2",
+      "removed_git_files": [
+        ".gitignore"
+      ],
+      "overlay_files": [
+        "meson.build"
+      ],
+      "source_hash": "136558b6e1ebaecc92755d0ffaf9421f519531bed30cc2ad23b22cb00965cc5e",
+      "file_count": 16,
+      "source_tree_sha256": "8ab14f5d9ab6385569cdb538821018de8643a5de98858efb3adb8963498d3f69"
+    },
+    {
+      "wrap": "proc-macro-error-1-rs.wrap",
+      "directory": "proc-macro-error-1.0.4",
+      "kind": "wrap-file",
+      "source_url": "https://crates.io/api/v1/crates/proc-macro-error/1.0.4/download",
+      "archive_sha256": "da25490ff9892aab3fcf7c36f08cfb902dd3e71ca0f9f9517bea02a73a5ce38c",
+      "archive_root": "proc-macro-error-1.0.4",
+      "removed_git_files": [
+        ".gitignore"
+      ],
+      "overlay_files": [
+        "meson.build"
+      ],
+      "source_hash": "da25490ff9892aab3fcf7c36f08cfb902dd3e71ca0f9f9517bea02a73a5ce38c",
+      "file_count": 51,
+      "source_tree_sha256": "940b250fb1ec5f0ff738d92d4dfec947beb812d665480ae3d3104aac22f6cf2c"
+    },
+    {
+      "wrap": "proc-macro-error-attr-1-rs.wrap",
+      "directory": "proc-macro-error-attr-1.0.4",
+      "kind": "wrap-file",
+      "source_url": "https://crates.io/api/v1/crates/proc-macro-error-attr/1.0.4/download",
+      "archive_sha256": "a1be40180e52ecc98ad80b184934baf3d0d29f979574e439af5a55274b35f869",
+      "archive_root": "proc-macro-error-attr-1.0.4",
+      "removed_git_files": [
+        ".gitignore"
+      ],
+      "overlay_files": [
+        "meson.build"
+      ],
+      "source_hash": "a1be40180e52ecc98ad80b184934baf3d0d29f979574e439af5a55274b35f869",
+      "file_count": 10,
+      "source_tree_sha256": "ccad71d674e5ac71355feb82ac65422eb519fb72d88f69aa23323c9ca85c7c67"
+    },
+    {
+      "wrap": "proc-macro2-1-rs.wrap",
+      "directory": "proc-macro2-1.0.95",
+      "kind": "wrap-file",
+      "source_url": "https://crates.io/api/v1/crates/proc-macro2/1.0.95/download",
+      "archive_sha256": "02b3e5e68a3a1a02aad3ec490a98007cbc13c37cbe84a3cd7b8e406d76e7f778",
+      "archive_root": "proc-macro2-1.0.95",
+      "removed_git_files": [
+        ".gitignore"
+      ],
+      "overlay_files": [
+        "meson.build"
+      ],
+      "source_hash": "02b3e5e68a3a1a02aad3ec490a98007cbc13c37cbe84a3cd7b8e406d76e7f778",
+      "file_count": 28,
+      "source_tree_sha256": "6ae034037d8903784216b395c6a6a9679a092eff75f7b02df85e800837954c14"
+    },
+    {
+      "wrap": "quote-1-rs.wrap",
+      "directory": "quote-1.0.36",
+      "kind": "wrap-file",
+      "source_url": "https://crates.io/api/v1/crates/quote/1.0.36/download",
+      "archive_sha256": "0fa76aaf39101c457836aec0ce2316dbdc3ab723cdda1c6bd4e6ad4208acaca7",
+      "archive_root": "quote-1.0.36",
+      "removed_git_files": [
+        ".gitignore"
+      ],
+      "overlay_files": [
+        "meson.build"
+      ],
+      "source_hash": "0fa76aaf39101c457836aec0ce2316dbdc3ab723cdda1c6bd4e6ad4208acaca7",
+      "file_count": 33,
+      "source_tree_sha256": "c676de6a076e1b3b1647b2e8d30b9c172b34be7d679358f2169640a4fb5dd375"
+    },
+    {
+      "wrap": "slirp.wrap",
+      "directory": "slirp",
+      "kind": "wrap-git",
+      "source_url": "https://gitlab.freedesktop.org/slirp/libslirp/-/archive/26be815b86e8d49add8c9a8b320239b9594ff03d/libslirp-26be815b86e8d49add8c9a8b320239b9594ff03d.tar.gz",
+      "archive_sha256": "abd190c8213f259ab9fc1a411b8dd87c54b7aeba329d3f87f4f4aa82d921bbc9",
+      "archive_root": "libslirp-26be815b86e8d49add8c9a8b320239b9594ff03d",
+      "removed_git_files": [
+        ".gitignore"
+      ],
+      "overlay_files": [],
+      "repository": "https://gitlab.freedesktop.org/slirp/libslirp.git",
+      "revision": "26be815b86e8d49add8c9a8b320239b9594ff03d",
+      "file_count": 69,
+      "source_tree_sha256": "994609792b315fead0959d81a3d2096c8ba62f44cdaa9ce1f26b6581cc53f909"
+    },
+    {
+      "wrap": "syn-2-rs.wrap",
+      "directory": "syn-2.0.104",
+      "kind": "wrap-file",
+      "source_url": "https://crates.io/api/v1/crates/syn/2.0.104/download",
+      "archive_sha256": "17b6f705963418cdb9927482fa304bc562ece2fdd4f616084c50b7023b435a40",
+      "archive_root": "syn-2.0.104",
+      "removed_git_files": [],
+      "overlay_files": [
+        "meson.build"
+      ],
+      "source_hash": "17b6f705963418cdb9927482fa304bc562ece2fdd4f616084c50b7023b435a40",
+      "file_count": 105,
+      "source_tree_sha256": "d537d01dfa38b0b63b3cdd63014cdce771bdb56687a7ef4b9557a7f6be6f1935"
+    },
+    {
+      "wrap": "unicode-ident-1-rs.wrap",
+      "directory": "unicode-ident-1.0.12",
+      "kind": "wrap-file",
+      "source_url": "https://crates.io/api/v1/crates/unicode-ident/1.0.12/download",
+      "archive_sha256": "3354b9ac3fae1ff6755cb6db53683adb661634f67557942dea4facebec0fee4b",
+      "archive_root": "unicode-ident-1.0.12",
+      "removed_git_files": [
+        ".gitattributes",
+        ".gitignore",
+        "tests/fst/.gitignore"
+      ],
+      "overlay_files": [
+        "meson.build"
+      ],
+      "source_hash": "3354b9ac3fae1ff6755cb6db53683adb661634f67557942dea4facebec0fee4b",
+      "file_count": 23,
+      "source_tree_sha256": "ee7a5e45bbec1304796a1128ac296a3e6c3ba40ee5ff75dd32148432845a7503"
+    }
+  ]
+}

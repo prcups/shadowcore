@@ -1,0 +1,33 @@
+[package]
+name = "blkio"
+version = "0.4.0"
+edition = "2021"
+rust-version = "1.56"
+license = "MIT OR Apache-2.0"
+description = "A library for high-performance block device I/O"
+keywords = ["block", "IO", "storage", "performance"]
+categories = ["filesystem", "hardware-support"]
+
+[features]
+default = [
+    "io_uring",
+    "nvme-io_uring",
+    "virtio-blk-vfio-pci",
+    "virtio-blk-vhost-user",
+    "virtio-blk-vhost-vdpa",
+    ]
+io_uring = ["io-uring"]
+nvme-io_uring = ["io-uring"]
+virtio-blk-vfio-pci = ["pci-driver/vfio", "virtio-driver/pci"]
+virtio-blk-vhost-user = ["virtio-driver/vhost-user"]
+virtio-blk-vhost-vdpa = ["virtio-driver/vhost-vdpa"]
+
+[dependencies]
+bitflags = "1.2"
+paste = "1"
+io-uring = { version = "0.6", optional = true }
+lazy_static = "1.1"
+libc = "0.2"
+rustix = { version = "0.37", features = ["fs", "mm"] }
+pci-driver = { version = "0.1.2", default-features = false, optional = true }
+virtio-driver = { path = "../virtio-driver", version = "0.5.0", default-features = false, optional = true }

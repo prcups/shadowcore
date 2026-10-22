@@ -1,0 +1,56 @@
+[package]
+name = "foreign"
+description = "Conversion between foreign and Rust types"
+version = "0.3.1"
+authors = ["Paolo Bonzini <pbonzini@redhat.com>"]
+edition = "2021"
+resolver = "2"
+license = "MIT OR Apache-2.0"
+keywords = ["ffi"]
+categories = ["development-tools::ffi", "rust-patterns"]
+rust-version = "1.64.0"
+readme = "README.md"
+repository = "https://gitlab.com/bonzini/foreign-rs"
+
+[dependencies]
+libc = "^0"
+
+[lints.rust]
+# Occasionally, we may need to silence warnings and clippy lints that
+# were only introduced in newer Rust compiler versions.  Do not croak
+# in that case; the nightly clippy job disables this and ensures
+# that there are no misspelled allow() attributes.
+unknown_lints = "allow"
+
+warnings = "deny"
+unsafe_op_in_unsafe_fn = "allow"
+
+[lints.rustdoc]
+private_intra_doc_links = "allow"
+broken_intra_doc_links = "deny"
+invalid_html_tags = "deny"
+invalid_rust_codeblocks = "deny"
+bare_urls = "deny"
+unescaped_backticks = "deny"
+redundant_explicit_links = "deny"
+
+[lints.clippy]
+too_many_arguments = "allow"
+
+as_ptr_cast_mut = "deny"
+borrow_as_ptr = "deny"
+borrow_deref_ref = "deny"
+cast_ptr_alignment = "deny"
+ptr_arg = "deny"
+ptr_as_ptr = "deny"
+ptr_cast_constness = "deny"
+return_self_not_must_use = "deny"
+should_implement_trait = "deny"
+transmute_ptr_to_ptr = "deny"
+transmute_ptr_to_ref = "deny"
+transmutes_expressible_as_ptr_casts = "deny"
+unnecessary_fallible_conversions = "deny"
+unnecessary_lazy_evaluations = "deny"
+unnecessary_mut_passed = "deny"
+useless_vec = "deny"
+wrong_self_convention = "deny"

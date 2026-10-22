@@ -1,0 +1,16 @@
+[package]
+name = "probe"
+version = "0.5.2"
+authors = ["Josh Stone <cuviper@gmail.com>"]
+description = "Static instrumentation probes"
+documentation = "https://docs.rs/probe/"
+homepage = "https://github.com/cuviper/probe-rs"
+repository = "https://github.com/cuviper/probe-rs"
+license = "Apache-2.0 OR MIT"
+edition = "2021"
+rust-version = "1.66"
+exclude = ["/.github/**"]
+
+[lib]
+name = "probe"
+crate-type = ["rlib"]

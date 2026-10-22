@@ -1,0 +1,31 @@
+[package]
+name = "attrs"
+version = "0.2.9"
+edition = "2021"
+description = "An ergonomic parser library for `#[attributes]`, built on parser combinators."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/aatifsyed/attrs"
+documentation = "https://docs.rs/attrs"
+homepage = "https://crates.io/crates/attrs"
+categories = [
+    "rust-patterns",
+    "parsing",
+    "development-tools::procedural-macro-helpers",
+    "development-tools",
+]
+rust-version = "1.83"
+
+[dependencies]
+proc-macro2 = { version = "1.0.94", default-features = false }
+syn = { version = "2.0.100", default-features = false, features = [
+    "parsing",
+    "derive",
+] }
+
+[dev-dependencies]
+quote = { version = "1.0.40", default-features = false }
+strum-lite = "0.1.1"
+syn = { version = "2", default-features = false, features = [
+    "printing",
+    "extra-traits",
+] }

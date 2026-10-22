@@ -1,0 +1,78 @@
+.test:
+  stage: test
+  only:
+  - branches
+  - merge_requests
+
+# Build using our current minimum supported Rust version.
+minimum-supported-rust-version:
+  extends: .test
+  image: rust:1.56
+  before_script:
+    - rustup component add clippy
+  script:
+    - cargo check --workspace
+    - cargo clippy --workspace
+
+# Build using the minimum possible versions of dependencies.
+minimal-dependency-versions:
+  extends: .test
+  image: rust:1.60  # needed by cargo-minimal-versions
+  before_script:
+    - rustup toolchain add nightly
+    - cargo +nightly install cargo-hack cargo-minimal-versions --locked
+  script:
+    - cargo minimal-versions check --workspace
+
+fedora:
+  extends: .test
+  image: fedora:38
+  before_script:
+    - dnf install -qy meson rust cargo python3-docutils rustfmt kcov clippy diffutils
+  script:
+    - ./build.sh
+    - meson install -C build
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: build/kcov-output/kcov-merged/cobertura.xml
+      junit: build/meson-logs/testlog-kcov-wrapper.sh.junit.xml
+
+debian:
+  extends: .test
+  image: debian:bookworm
+  before_script:
+    - apt-get update -qy
+    - apt-get install -qy meson rustc cargo python3-docutils diffutils
+  script:
+    - ./build.sh
+    - meson install -C build
+  artifacts:
+    reports:
+      junit: build/meson-logs/testlog.junit.xml
+
+debian-i386:
+  extends: debian
+  image: i386/debian:bookworm
+
+test_pages:
+  extends: .test
+  image: python:3.10-alpine
+  script:
+  - pip install -U sphinx==4.4.0
+  - sphinx-build -b html docs public
+  except:
+  - main
+
+pages:
+  stage: deploy
+  image: python:3.10-alpine
+  script:
+  - pip install -U sphinx==4.4.0
+  - sphinx-build -b html docs public
+  artifacts:
+    paths:
+      - public
+  only:
+  - main
