@@ -11,6 +11,7 @@
 #include "hw/intc/loongarch_extioi.h"
 #include "hw/core/loader.h"
 #include "hw/loongarch/virt.h"
+#include "hw/loongarch/shadowcore.h"
 #include "hw/pci-host/gpex.h"
 #include "system/device_tree.h"
 #include "system/reset.h"
@@ -92,7 +93,20 @@ static void fdt_add_cpu_nodes(const LoongArchVirtMachineState *lvms)
         }
 
         nodename = g_strdup_printf("/cpus/cpu@%d", num);
-        if (ms->smp.threads > 1) {
+        if (virt_is_shadowcore(lvms)) {
+            const CpuInstanceProperties *props = &possible_cpus->cpus[num].props;
+
+            if (num < SHADOWCORE_BIG_THREADS) {
+                map_path = g_strdup_printf(
+                    "/cpus/cpu-map/socket0/cluster%d/core%d/thread%d",
+                    (int)props->cluster_id, (int)props->core_id,
+                    (int)props->thread_id);
+            } else {
+                map_path = g_strdup_printf(
+                    "/cpus/cpu-map/socket0/cluster%d/core%d",
+                    (int)props->cluster_id, (int)props->core_id);
+            }
+        } else if (ms->smp.threads > 1) {
             map_path = g_strdup_printf(
                 "/cpus/cpu-map/socket%d/core%d/thread%d",
                 num / (ms->smp.cores * ms->smp.threads),

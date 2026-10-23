@@ -53,6 +53,7 @@ struct cpuinfo_loongarch {
 	int			cache_leaves_present; /* number of cache_leaves[] elements */
 	struct cache_desc	cache_leaves[CACHE_LEAVES_MAX];
 	int			core;   /* physical core number in package */
+	int			cluster;/* PPTT cluster identifier */
 	int			package;/* physical package number */
 	int			global_id; /* physical global thread number */
 	int			vabits; /* Virtual Address size in bits */

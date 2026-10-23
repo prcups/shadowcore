@@ -80,7 +80,7 @@ shadowcore-test/
   处理好 thread、leaf、processor ID valid、identical implementation 标志。
 - 大核 sibling mask 应依次为 `{0,1}`、`{2,3}` 到 `{14,15}`；CPU16 的
   sibling mask 只有自身。验证 sysfs 与调度域，不只检查启动日志或 `lscpu`。
-- 自定义 ACPI 电源设备通过 `_CRS` 描述 MMIO 和 IRQ，通过设备属性描述
+- 自定义 ACPI 电源设备通过 `_CRS` 描述 MMIO，通过设备属性描述
   CPU 关联、角色及第一版固定容量；设备 ID 和寄存器协议必须有文档。
 - 第一版允许专用 cpuidle 驱动与固定 capacity，不要求先实现完整 CPPC。
   后续采用 `_CPC`、`_LPI` 时必须实现其真实语义，不用常量占位冒充可工作的

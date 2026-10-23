@@ -13,6 +13,7 @@ obj-y		+= head.o cpu-probe.o cacheinfo.o env.o setup.o entry.o genex.o \
 		   alternative.o kdebugfs.o unwind.o
 
 obj-$(CONFIG_ACPI)		+= acpi.o
+obj-$(CONFIG_LOONGARCH_SHADOWCORE) += shadowcore.o
 obj-$(CONFIG_EFI) 		+= efi.o
 
 obj-$(CONFIG_CPU_HAS_FPU)	+= fpu.o kfpu.o

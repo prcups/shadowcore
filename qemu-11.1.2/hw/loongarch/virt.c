@@ -20,6 +20,7 @@
 #include "system/reset.h"
 #include "system/rtc.h"
 #include "hw/loongarch/virt.h"
+#include "hw/loongarch/shadowcore.h"
 #include "system/address-spaces.h"
 #include "hw/core/irq.h"
 #include "net/net.h"
@@ -491,6 +492,9 @@ static void virt_devices_init(DeviceState *pch_pic,
 
     /* acpi ged */
     lvms->acpi_ged = create_acpi_ged(pch_pic, lvms);
+    if (virt_is_shadowcore(lvms)) {
+        virt_shadowcore_init(lvms);
+    }
     /* platform bus */
     lvms->platform_bus_dev = create_platform_bus(pch_pic);
 }
@@ -1178,6 +1182,10 @@ static void virt_cpu_pre_plug(HotplugHandler *hotplug_dev,
     LoongArchCPUTopo topo;
     int arch_id;
 
+    if (virt_is_shadowcore(lvms) && lvms->acpi_ged) {
+        error_setg(errp, "shadowcore-test has a fixed CPU inventory; hot-add disabled");
+        return;
+    }
     if (lvms->acpi_ged) {
         if ((cpu->thread_id < 0) || (cpu->thread_id >= ms->smp.threads)) {
             error_setg(errp,
@@ -1215,6 +1223,10 @@ static void virt_cpu_pre_plug(HotplugHandler *hotplug_dev,
     } else {
         /* For cold-add cpu, find empty cpu slot */
         cpu_slot = virt_find_empty_cpu_slot(ms);
+        if (!cpu_slot) {
+            error_setg(errp, "No free CPU slot");
+            return;
+        }
         topo.socket_id = cpu_slot->props.socket_id;
         topo.core_id = cpu_slot->props.core_id;
         topo.thread_id = cpu_slot->props.thread_id;
@@ -1235,6 +1247,11 @@ static void virt_cpu_unplug_request(HotplugHandler *hotplug_dev,
     LoongArchVirtMachineState *lvms = LOONGARCH_VIRT_MACHINE(hotplug_dev);
     LoongArchCPU *cpu = LOONGARCH_CPU(dev);
     CPUState *cs = CPU(dev);
+
+    if (virt_is_shadowcore(lvms)) {
+        error_setg(errp, "shadowcore-test has a fixed CPU inventory; unplug disabled");
+        return;
+    }
 
     if (cs->cpu_index == 0) {
         error_setg(errp, "hot-unplug of boot cpu(id%d=%d:%d:%d) not supported",
@@ -1287,7 +1304,7 @@ static void virt_cpu_plug(HotplugHandler *hotplug_dev,
         hotplug_handler_plug(HOTPLUG_HANDLER(lvms->dintc), dev, &error_abort);
     }
 
-    if (lvms->acpi_ged) {
+    if (lvms->acpi_ged && !virt_is_shadowcore(lvms)) {
         hotplug_handler_plug(HOTPLUG_HANDLER(lvms->acpi_ged), dev,
                              &error_abort);
     }

@@ -36,9 +36,21 @@ static inline const struct cpumask *cpu_coregroup_mask(int cpu)
 }
 
 #define topology_physical_package_id(cpu)	(cpu_data[cpu].package)
+#define topology_cluster_id(cpu)		(cpu_data[cpu].cluster)
+#define topology_cluster_cpumask(cpu)		(&cpu_cluster_map[cpu])
+
+static inline const struct cpumask *cpu_clustergroup_mask(int cpu)
+{
+	return &cpu_cluster_map[cpu];
+}
+
 #define topology_core_id(cpu)			(cpu_data[cpu].core)
 #define topology_core_cpumask(cpu)		(&cpu_core_map[cpu])
 #define topology_sibling_cpumask(cpu)		(&cpu_sibling_map[cpu])
+#endif
+
+#ifdef CONFIG_LOONGARCH_SHADOWCORE
+#define arch_scale_cpu_capacity topology_get_cpu_scale
 #endif
 
 #include <asm-generic/topology.h>

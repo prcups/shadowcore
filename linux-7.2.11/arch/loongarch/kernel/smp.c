@@ -54,6 +54,10 @@ EXPORT_SYMBOL(cpu_llc_shared_map);
 cpumask_t cpu_core_map[NR_CPUS] __read_mostly;
 EXPORT_SYMBOL(cpu_core_map);
 
+/* Cluster peers from PPTT; package peers when no cluster is described. */
+cpumask_t cpu_cluster_map[NR_CPUS] __read_mostly;
+EXPORT_SYMBOL(cpu_cluster_map);
+
 static DECLARE_COMPLETION(cpu_starting);
 static DECLARE_COMPLETION(cpu_running);
 
@@ -144,6 +148,11 @@ static inline void set_cpu_sibling_map(int cpu)
 	cpumask_set_cpu(cpu, &cpu_sibling_setup_map);
 
 	for_each_cpu(i, &cpu_sibling_setup_map) {
+		if (cpu_data[cpu].package == cpu_data[i].package &&
+		    cpu_data[cpu].cluster == cpu_data[i].cluster) {
+			cpumask_set_cpu(i, &cpu_cluster_map[cpu]);
+			cpumask_set_cpu(cpu, &cpu_cluster_map[i]);
+		}
 		if (cpus_are_siblings(cpu, i)) {
 			cpumask_set_cpu(i, &cpu_sibling_map[cpu]);
 			cpumask_set_cpu(cpu, &cpu_sibling_map[i]);
@@ -156,6 +165,8 @@ static inline void clear_cpu_sibling_map(int cpu)
 	int i;
 
 	for_each_cpu(i, &cpu_sibling_setup_map) {
+		cpumask_clear_cpu(i, &cpu_cluster_map[cpu]);
+		cpumask_clear_cpu(cpu, &cpu_cluster_map[i]);
 		if (cpus_are_siblings(cpu, i)) {
 			cpumask_clear_cpu(i, &cpu_sibling_map[cpu]);
 			cpumask_clear_cpu(cpu, &cpu_sibling_map[i]);

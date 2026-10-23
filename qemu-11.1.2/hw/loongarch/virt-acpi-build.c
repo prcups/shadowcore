@@ -22,6 +22,7 @@
 
 /* Supported chipsets: */
 #include "hw/loongarch/virt.h"
+#include "hw/loongarch/shadowcore.h"
 
 #include "hw/acpi/utils.h"
 #include "hw/acpi/pci.h"
@@ -477,6 +478,9 @@ build_dsdt(GArray *table_data, BIOSLinker *linker, MachineState *machine)
     }
     build_pci_device_aml(dsdt, lvms);
     build_la_ged_aml(dsdt, machine);
+    if (virt_is_shadowcore(lvms)) {
+        virt_shadowcore_dsdt(dsdt, lvms);
+    }
     build_flash_aml(dsdt, lvms);
 #ifdef CONFIG_TPM
     acpi_dsdt_add_tpm(dsdt, lvms);
@@ -538,8 +542,12 @@ static void acpi_build(AcpiBuildTables *tables, MachineState *machine)
     build_madt(tables_blob, tables->linker, lvms);
 
     acpi_add_table(table_offsets, tables_blob);
-    build_pptt(tables_blob, tables->linker, machine, lvms->oem_id,
-               lvms->oem_table_id, 0, NULL);
+    if (virt_is_shadowcore(lvms)) {
+        virt_shadowcore_pptt(tables_blob, tables->linker, lvms);
+    } else {
+        build_pptt(tables_blob, tables->linker, machine, lvms->oem_id,
+                   lvms->oem_table_id, 0, NULL);
+    }
 
     acpi_add_table(table_offsets, tables_blob);
     build_srat(tables_blob, tables->linker, machine);
