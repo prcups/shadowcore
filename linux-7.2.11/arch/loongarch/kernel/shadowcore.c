@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* SHDW0001 ABI 1.0: immutable discovery, not a power-control driver. */
+/* SHDW0001 ABI 1.0: self-off and a pinned power-management worker. */
 #include <linux/acpi.h>
 #include <linux/atomic.h>
 #include <linux/cpu.h>
@@ -11,17 +11,41 @@
 #include <linux/sched/topology.h>
 #include <linux/slab.h>
 #include <linux/mutex.h>
+#include <linux/iopoll.h>
+#include <linux/kthread.h>
+#include <linux/sched/task.h>
 #include <linux/topology.h>
 #include <asm/smp.h>
+#include <asm/shadowcore.h>
 #include <asm/topology.h>
 
 #define SC_ABI             0x00010000
 #define SC_MAGIC           0x53484352
 #define SC_DISCOVERY       BIT(0)
+#define SC_CPU_POWER       BIT(1)
+#define SC_CAPABILITIES    (SC_DISCOVERY | SC_CPU_POWER)
 #define SC_RECORD_BASE     0x100
 #define SC_RECORD_SIZE     0x20
 #define SC_MMIO_SIZE       0x1000
 #define SC_FIELDS          7
+#define SC_SLOT_BASE       0x500
+#define SC_SLOT_STRIDE     0x40
+#define SC_COMMAND         0x00
+#define SC_STATE           0x04
+#define SC_RESULT          0x08
+#define SC_ENTRY_LO        0x0c
+#define SC_ENTRY_HI        0x10
+#define SC_SEQUENCE        0x14
+#define SC_COMPLETED       0x18
+#define SC_OFF_COUNT       0x1c
+#define SC_ON_COUNT        0x20
+#define SC_CMD_CPU_OFF     1
+#define SC_CMD_CPU_ON      2
+#define SC_RESULT_OK       0
+#define SC_RESULT_ALREADY  2
+#define SC_STATE_OFF       0
+#define SC_STATE_ON        1
+#define SC_TIMEOUT_US      5000000
 
 enum sc_field { SC_UID, SC_HWID, SC_CORE, SC_ROLE, SC_CAPACITY,
 	       SC_CLUSTER, SC_THREAD };
@@ -30,11 +54,196 @@ struct sc_platform {
 	u32 count;
 	u32 *field[SC_FIELDS];
 	int *cpu;
+	void __iomem *regs;
+	unsigned int manager;
+	struct kthread_worker *worker;
 };
 
 static atomic_t topology_changed = ATOMIC_INIT(0);
 static DEFINE_MUTEX(sc_lock);
 static bool installed;
+static struct sc_platform *sc_live;
+static int sc_manager_cpu = -1;
+
+bool shadowcore_cpu_is_manager(unsigned int cpu)
+{
+	return READ_ONCE(sc_manager_cpu) == cpu;
+}
+
+static int sc_cpu_index(struct sc_platform *sc, unsigned int cpu)
+{
+	unsigned int i;
+
+	for (i = 0; i < sc->count; i++)
+		if (sc->cpu[i] == cpu)
+			return i;
+	return -EINVAL;
+}
+
+static void __iomem *sc_slot(struct sc_platform *sc, unsigned int index)
+{
+	return sc->regs + SC_SLOT_BASE + SC_SLOT_STRIDE * index;
+}
+
+/* All manager work is bounded and must not acquire the CPU-hotplug lock. */
+struct sc_manager_request {
+	struct kthread_work work;
+	struct sc_platform *sc;
+	unsigned int index;
+	unsigned long entry;
+	bool start;
+	int result;
+};
+
+static void sc_manager_work(struct kthread_work *work)
+{
+	struct sc_manager_request *request = container_of(work,
+					struct sc_manager_request, work);
+	struct sc_platform *sc = request->sc;
+	void __iomem *slot = sc_slot(sc, request->index);
+	u32 state, sequence, result;
+	int ret;
+
+	if (WARN_ON_ONCE(raw_smp_processor_id() != sc->manager)) {
+		request->result = -EPERM;
+		return;
+	}
+	if (!request->start) {
+		ret = readl_poll_timeout(slot + SC_STATE, state,
+			state == SC_STATE_OFF && readl(slot + SC_SEQUENCE) &&
+			readl(slot + SC_COMPLETED) == readl(slot + SC_SEQUENCE),
+			100, SC_TIMEOUT_US);
+		request->result = ret;
+		return;
+	}
+
+	state = readl(slot + SC_STATE);
+	if (state == SC_STATE_ON) {
+		/* Initial boot or a CPU using the original firmware wait path. */
+		request->result = -EALREADY;
+		return;
+	}
+	if (state != SC_STATE_OFF) {
+		request->result = -EBUSY;
+		return;
+	}
+	sequence = readl(slot + SC_SEQUENCE);
+	if (sequence == U32_MAX) {
+		request->result = -EOVERFLOW;
+		return;
+	}
+	sequence++;
+	writel(lower_32_bits(request->entry), slot + SC_ENTRY_LO);
+	writel(upper_32_bits(request->entry), slot + SC_ENTRY_HI);
+	writel(sequence, slot + SC_SEQUENCE);
+	writel(SC_CMD_CPU_ON, slot + SC_COMMAND);
+	result = readl(slot + SC_RESULT);
+	if (result != SC_RESULT_OK && result != SC_RESULT_ALREADY) {
+		request->result = -EIO;
+		return;
+	}
+	ret = readl_poll_timeout(slot + SC_COMPLETED, result, result == sequence,
+				100, SC_TIMEOUT_US);
+	/* A late start after returning to hotplug rollback would be unsafe. */
+	if (ret)
+		panic("Shadowcore: CPU%d CPU_ON acknowledgement timed out",
+		      sc->cpu[request->index]);
+	request->result = readl(slot + SC_STATE) == SC_STATE_ON ? 0 : -EIO;
+}
+
+static int sc_manager_request(unsigned int cpu, bool start, unsigned long entry)
+{
+	struct sc_platform *sc = smp_load_acquire(&sc_live);
+	struct sc_manager_request request;
+	int index;
+
+	if (!sc)
+		return -ENODEV;
+	index = sc_cpu_index(sc, cpu);
+	if (index < 0 || sc->field[SC_ROLE][index])
+		return -EPERM;
+	request.sc = sc;
+	request.index = index;
+	request.entry = entry;
+	request.start = start;
+	request.result = -EIO;
+	kthread_init_work(&request.work, sc_manager_work);
+	/* Avoid self-flush if a future policy runs directly on the manager. */
+	if (current == sc->worker->task) {
+		sc_manager_work(&request.work);
+	} else {
+		kthread_queue_work(sc->worker, &request.work);
+		kthread_flush_work(&request.work);
+	}
+	return request.result;
+}
+
+int shadowcore_cpu_on(unsigned int cpu, unsigned long entry)
+{
+	return sc_manager_request(cpu, true, entry);
+}
+
+int shadowcore_cpu_wait_off(unsigned int cpu)
+{
+	return sc_manager_request(cpu, false, 0);
+}
+
+void shadowcore_cpu_start_failed(unsigned int cpu)
+{
+	struct sc_platform *sc = smp_load_acquire(&sc_live);
+
+	/* Do not reuse cpuboot_data while a late secondary might still read it. */
+	if (sc && sc_cpu_index(sc, cpu) >= 0)
+		panic("Shadowcore: CPU%u startup timed out; refusing unsafe rollback", cpu);
+}
+
+int shadowcore_cpu_disable(unsigned int cpu)
+{
+	struct sc_platform *sc = smp_load_acquire(&sc_live);
+	int index;
+
+	if (shadowcore_cpu_is_manager(cpu))
+		return -EPERM;
+	if (!sc)
+		return 0;
+	index = sc_cpu_index(sc, cpu);
+	if (index < 0 || sc->field[SC_ROLE][index])
+		return -EPERM;
+	if (!cpu_online(sc->manager))
+		return -EBUSY;
+	if (readl(sc_slot(sc, index) + SC_STATE) != SC_STATE_ON)
+		return -EBUSY;
+	/* Reserve a sequence for both OFF and the following ON. */
+	if (readl(sc_slot(sc, index) + SC_SEQUENCE) >= U32_MAX - 1)
+		return -EOVERFLOW;
+	return 0;
+}
+
+/* Returns only when no controller exists or preparation fails. */
+int shadowcore_cpu_off(unsigned int cpu)
+{
+	struct sc_platform *sc = smp_load_acquire(&sc_live);
+	void __iomem *slot;
+	u32 sequence;
+	int index;
+
+	if (!sc)
+		return -ENODEV;
+	index = sc_cpu_index(sc, cpu);
+	if (index < 0 || sc->field[SC_ROLE][index] ||
+	    cpu != raw_smp_processor_id() || !irqs_disabled())
+		return -EPERM;
+	slot = sc_slot(sc, index);
+	sequence = readl(slot + SC_SEQUENCE);
+	if (sequence >= U32_MAX - 1)
+		return -EOVERFLOW;
+	/* No lock or cleanup may depend on this CPU after the command write. */
+	writel(sequence + 1, slot + SC_SEQUENCE);
+	wmb();
+	writel(SC_CMD_CPU_OFF, slot + SC_COMMAND);
+	for (;;)
+		asm volatile("idle 0" : : : "memory");
+}
 
 /* Force capacity/asymmetry rescan even when the cpuset masks are unchanged. */
 int arch_update_cpu_topology(void)
@@ -52,7 +261,7 @@ static DEVICE_ATTR_RO(abi_version);
 static ssize_t capabilities_show(struct device *dev,
 				 struct device_attribute *attr, char *buf)
 {
-	return sysfs_emit(buf, "0x%08lx\n", SC_DISCOVERY);
+	return sysfs_emit(buf, "0x%08lx\n", SC_CAPABILITIES);
 }
 static DEVICE_ATTR_RO(capabilities);
 
@@ -74,9 +283,40 @@ static ssize_t cpu_map_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(cpu_map);
 
+static ssize_t manager_cpu_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	struct sc_platform *sc = dev_get_drvdata(dev);
+
+	return sysfs_emit(buf, "%u\n", sc->manager);
+}
+static DEVICE_ATTR_RO(manager_cpu);
+
+static ssize_t power_state_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	struct sc_platform *sc = dev_get_drvdata(dev);
+	unsigned int i;
+	int len;
+
+	len = sysfs_emit(buf, "cpu hwid state domain sequence completed off_count on_count\n");
+	for (i = 0; i < sc->count; i++) {
+		void __iomem *slot = sc_slot(sc, i);
+
+		len += sysfs_emit_at(buf, len, "%d %u %u %u %u %u %u %u\n",
+			sc->cpu[i], sc->field[SC_HWID][i], readl(slot + SC_STATE),
+			readl(sc->regs + 0x480 + 4 * i),
+			readl(slot + SC_SEQUENCE), readl(slot + SC_COMPLETED),
+			readl(slot + SC_OFF_COUNT), readl(slot + SC_ON_COUNT));
+	}
+	return len;
+}
+static DEVICE_ATTR_RO(power_state);
+
 static struct attribute *sc_attrs[] = {
 	&dev_attr_abi_version.attr, &dev_attr_capabilities.attr,
-	&dev_attr_cpu_map.attr, NULL,
+	&dev_attr_cpu_map.attr, &dev_attr_manager_cpu.attr,
+	&dev_attr_power_state.attr, NULL,
 };
 static const struct attribute_group sc_group = { .attrs = sc_attrs };
 
@@ -151,6 +391,44 @@ static int sc_validate(struct device *dev, struct sc_platform *sc)
 	return 0;
 }
 
+/* The manager's protection lasts for this fixed-inventory machine's lifetime. */
+static int sc_pin_manager(struct sc_platform *sc)
+{
+	static const struct attribute online_attr = { .name = "online" };
+	static const struct attribute target_attr = { .name = "target" };
+	static const struct attribute fail_attr = { .name = "fail" };
+	struct device *dev = get_cpu_device(sc->manager);
+	int ret = 0;
+
+	if (!dev)
+		return -EPROBE_DEFER;
+	lock_device_hotplug();
+	device_lock(dev);
+	cpus_read_lock();
+	if (!cpu_online(sc->manager)) {
+		ret = -ENODEV;
+	} else {
+		WRITE_ONCE(sc_manager_cpu, sc->manager);
+		container_of(dev, struct cpu, dev)->hotpluggable = false;
+		dev_set_offline_disabled(dev);
+	}
+	cpus_read_unlock();
+	device_unlock(dev);
+	unlock_device_hotplug();
+	/* Removing an attribute may wait for its callback: hold no hotplug lock. */
+	if (!ret) {
+		sysfs_remove_file(&dev->kobj, &online_attr);
+		sysfs_remove_file_from_group(&dev->kobj, &target_attr, "hotplug");
+		sysfs_remove_file_from_group(&dev->kobj, &fail_attr, "hotplug");
+	}
+	return ret;
+}
+
+static void sc_destroy_worker(void *data)
+{
+	kthread_destroy_worker(data);
+}
+
 static int sc_probe(struct platform_device *pdev)
 {
 	static const char * const names[SC_FIELDS] = {
@@ -162,7 +440,7 @@ static int sc_probe(struct platform_device *pdev)
 	struct sc_platform *sc;
 	struct resource *res;
 	void __iomem *regs;
-	u32 abi, caps;
+	u32 abi, caps, manager_uid;
 	int i, j, ret;
 
 	guard(mutex)(&sc_lock);
@@ -176,7 +454,8 @@ static int sc_probe(struct platform_device *pdev)
 	if (device_property_read_u32(dev, "shadowcore,abi-version", &abi) ||
 	    device_property_read_u32(dev, "shadowcore,capabilities", &caps) ||
 	    device_property_read_u32(dev, "shadowcore,cpu-count", &sc->count) ||
-	    abi != SC_ABI || caps != SC_DISCOVERY || sc->count != 17 ||
+	    device_property_read_u32(dev, "shadowcore,manager-uid", &manager_uid) ||
+	    abi != SC_ABI || caps != SC_CAPABILITIES || sc->count != 17 ||
 	    sc->count != num_possible_cpus())
 		return dev_err_probe(dev, -EINVAL, "unsupported or incomplete discovery ABI\n");
 	sc->cpu = devm_kcalloc(dev, sc->count, sizeof(*sc->cpu), GFP_KERNEL);
@@ -195,6 +474,7 @@ static int sc_probe(struct platform_device *pdev)
 	regs = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
 	if (IS_ERR(regs))
 		return PTR_ERR(regs);
+	sc->regs = regs;
 	if (resource_size(res) != SC_MMIO_SIZE ||
 	    readl(regs) != SC_MAGIC || readl(regs + 4) != abi ||
 	    readl(regs + 8) != caps || readl(regs + 12) != sc->count ||
@@ -212,6 +492,24 @@ static int sc_probe(struct platform_device *pdev)
 	ret = sc_validate(dev, sc);
 	if (ret)
 		return dev_err_probe(dev, ret, "CPU identity or topology validation failed\n");
+	for (i = 0; i < sc->count; i++)
+		if (sc->field[SC_UID][i] == manager_uid)
+			break;
+	if (i == sc->count || !sc->field[SC_ROLE][i] ||
+	    readl(regs + 0x18) != sc->field[SC_HWID][i] ||
+	    readl(regs + 0x1c) != SC_SLOT_STRIDE)
+		return dev_err_probe(dev, -EINVAL, "invalid management CPU mapping\n");
+	sc->manager = sc->cpu[i];
+	ret = sc_pin_manager(sc);
+	if (ret)
+		return dev_err_probe(dev, ret, "management CPU must be online\n");
+	sc->worker = kthread_create_worker_on_cpu(sc->manager, 0, "shadowcore/%u");
+	if (IS_ERR(sc->worker))
+		return PTR_ERR(sc->worker);
+	wake_up_process(sc->worker->task);
+	ret = devm_add_action_or_reset(dev, sc_destroy_worker, sc->worker);
+	if (ret)
+		return ret;
 	platform_set_drvdata(pdev, sc);
 	ret = devm_device_add_group(dev, &sc_group);
 	if (ret)
@@ -221,12 +519,13 @@ static int sc_probe(struct platform_device *pdev)
 	cpus_read_lock();
 	for (i = 0; i < sc->count; i++)
 		topology_set_cpu_scale(sc->cpu[i], sc->field[SC_CAPACITY][i]);
+	smp_store_release(&sc_live, sc);
 	cpus_read_unlock();
 	installed = true;
 	atomic_set(&topology_changed, 1);
 	rebuild_sched_domains();
-	dev_info(dev, "ABI 1.0: validated %u CPUs; fixed capacities installed; discovery only\n",
-		 sc->count);
+	dev_info(dev, "ABI 1.0: %u CPUs; power manager bound to CPU%u (not hotpluggable)\n",
+		 sc->count, sc->manager);
 	return 0;
 }
 
@@ -236,10 +535,11 @@ static void sc_remove(struct platform_device *pdev)
 	int i;
 
 	guard(mutex)(&sc_lock);
-	cpus_read_lock();
+	cpus_write_lock();
+	smp_store_release(&sc_live, NULL);
 	for (i = 0; i < sc->count; i++)
 		topology_set_cpu_scale(sc->cpu[i], SCHED_CAPACITY_SCALE);
-	cpus_read_unlock();
+	cpus_write_unlock();
 	atomic_set(&topology_changed, 1);
 	rebuild_sched_domains();
 	installed = false;

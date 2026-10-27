@@ -439,6 +439,8 @@ struct ArchCPU {
     CPULoongArchState env;
     QEMUTimer timer;
     uint32_t  phy_id;
+    /* TCG power gate, independent of ordinary idle/halted state. */
+    bool shadowcore_powered_off;
     OnOffAuto lbt;
     OnOffAuto pmu;
     OnOffAuto ptw;

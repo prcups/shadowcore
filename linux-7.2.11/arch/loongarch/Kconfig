@@ -823,11 +823,12 @@ endmenu
 source "arch/loongarch/kvm/Kconfig"
 
 config LOONGARCH_SHADOWCORE
-	bool "Shadowcore ACPI platform discovery and fixed CPU capacity"
-	depends on ACPI && SMP && 64BIT
+	bool "Shadowcore ACPI capacity and CPU power management"
+	depends on ACPI && SMP && 64BIT && HOTPLUG_CPU
 	help
-	  Receive the versioned SHDW0001 discovery ABI on shadowcore-test.
+	  Receive the versioned SHDW0001 ABI on shadowcore-test.
 	  Validate ACPI CPU UIDs, hardware IDs, PPTT grouping and MMIO records
-	  before installing the fixed scheduler capacities. Other machines
-	  retain the default capacity of 1024. No power control or ISA changes
-	  are implemented by this driver.
+	  before installing fixed scheduler capacities and the Shadowcore
+	  CPU_OFF/CPU_ON MMIO interface. Power management runs on the always-online
+	  little CPU; CPUs power themselves off after hotplug teardown. Other
+	  machines retain their native CPU startup/offline path and capacity.

@@ -41,11 +41,19 @@ ACPI 描述、虚拟电源控制器和软硬件协议可以自主设计，不要
 | 启动 | CPU0 启动 Linux | 作为 secondary CPU 正常上线 |
 | 指令集 | LoongArch64，包含 LASX | 相同公共基础能力，但无 LASX |
 | 初始容量示例 | 每逻辑 CPU 1024 | 256，可配置 |
-| 空闲状态 | 浅睡、保留上下文的深睡 | 初期只支持浅睡 |
+| 电源状态 | 浅睡；深睡通过 CPU_OFF 下线，CPU_ON 后从启动入口重新上线 | 初期只支持浅睡 |
 
 - 不要求从小核启动 Linux，不把该能力作为第一版前置条件。
-- 第一版保持 CPU0–CPU16 Linux-online。硬件深睡不是 CPU hotplug，不修改
-  `cpu_online_mask`，不在 cpuidle 回调中执行 `cpu_down()` 等可睡眠流程。
+- 启动时 CPU0–CPU16 均 Linux-online。大核深度关断采用 CPU_OFF/CPU_ON
+  生命周期：进入关断前通过 Linux CPU hotplug 正常迁移任务、IRQ 和 per-CPU
+  资源并清除 online 状态；唤醒时通过 `cpu_up()`/架构启动钩子重新启动，
+  从 Linux secondary CPU 启动入口执行。它不是保留上下文的 cpuidle 状态，
+  不得把 CPU_OFF/CPU_ON 描述成 idle 返回原指令位置。CPU16 是固定管理核，
+  始终保持 online，禁止下线且不提供 per-CPU sysfs online 控制接口。
+- `cpu_down()`/`cpu_up()` 是可睡眠的 CPU hotplug 操作，禁止在 cpuidle
+  回调、IRQ 或其他原子上下文中调用。若策略要根据空闲情况关核，必须由
+  可睡眠的协调线程/工作流程发起 hotplug，并定义并发、超时和取消行为；
+  idle 预测本身不能绕过 hotplug 生命周期。
 - CPU 编号是测试约定。驱动通过 ACPI UID、硬件 ID、角色属性建立映射，
   不得在控制路径中散布硬编码 `16` 或假定逻辑 ID 等于物理 ID。
 - 小核不支持 LASX 是指在执行 LASX 指令时，触发一个专有的例外，在例外中
@@ -95,8 +103,10 @@ QEMU 提供独立、常开的电源控制器。即使全部 CPU 停止执行，�
 事件与必要定时器仍能工作。至少设计以下接口：
 
 - ABI 版本、能力、CPU 与物理核映射。
-- 每线程休眠请求：状态、请求序号、必要时的定时唤醒期限。
-- 每物理核状态：活跃线程、休眠就绪线程、实际电源状态。
+- 每线程 CPU_OFF/CPU_ON 请求：目标硬件 CPU、操作、请求序号及结果；
+  需要定时唤醒时携带期限。CPU_OFF 只在 Linux hotplug 已安全停下目标线程后
+  确认执行，CPU_ON 由 Linux hotplug 启动路径发起。
+- 每物理核状态：online/正在下线/已关断线程 mask、实际模拟电源状态及拒绝原因。
 - 唤醒命令：目标硬件 CPU mask 和原因。
 - pending 事件、确认操作、计数器和拒绝原因。
 
@@ -105,37 +115,82 @@ QEMU 提供独立、常开的电源控制器。即使全部 CPU 停止执行，�
 假定不同 vCPU 对 MMIO 的访问天然串行。未实现的 VM 迁移功能应明确阻止，
 不能静默丢失电源状态、pending 事件或计时器。
 
+当前 CPU power bank 使用 ABI 1.0：每条 ACPI CPU 记录拥有独立的 0x40-byte
+命令槽（0x500 + 0x40*n），小端、32-bit、4-byte 对齐，不再使用共享 TARGET。
+槽内包含 COMMAND、STATE、RESULT、64-bit 启动入口的低/高半部、请求序号、
+完成序号和 OFF/ON 计数器；寄存器、复位值、拒绝规则和验证边界集中记录在
+linux-7.2.11/Documentation/arch/loongarch/shadowcore-power.rst。
+
+- CPU_OFF 由目标大核自身在 hotplug 拆卸完成后提交，最终命令写入不持有
+  任何需要继续执行才能释放的锁。成功后不返回旧执行路径；QEMU 使用
+  async_run_on_cpu() 在目标 vCPU 安全点停用本地定时器并确认 OFF。
+- 管理 CPU 固定为小核角色（默认 CPU16），通过 ACPI manager-uid、UID/
+  硬件 ID/角色建立映射；CPU_ON 和 OFF 状态确认由绑定该 CPU 的管理线程执行。
+  小核保持 online，禁止 Linux 下线、移除其 per-CPU sysfs online 控制文件，
+  同时隐藏 hotplug/target、hotplug/fail，并在 hotplug 核心拆卸前拒绝请求；
+  QEMU 也拒绝其 CPU_OFF；普通用户态 affinity 不改变管理线程绑定。
+- CPU_ON 携带物理 smpboot_entry，在目标 vCPU 安全点丢弃旧架构上下文、复位，
+  然后从该入口开始执行。首次启动仍使用原生固件 mailbox/IPI 路径。
+- QEMU MMIO 和异步电源状态回调受 BQL 保护，未完成操作保留独立参数快照；
+  完成序号、状态及复位 generation 防止过时请求污染新状态。迁移仍禁止；自动关核策略和常开广播定时器未由本次改动实现。
+
 ### 6.2 状态机与竞态
 
 ```text
-RUNNING -> IDLE_ARMED -> RETENTION_SLEEP -> WAKING -> RUNNING
-                 \-> 有待处理事件时取消休眠
+ONLINE/RUNNING -> OFFLINING -> CPU_OFF -> OFFLINE/POWERED_DOWN
+                                      -> CPU_ON -> STARTING -> ONLINE
 ```
 
-- 目标线程自身在 idle 路径提交休眠；禁止远程强制关闭仍在执行任务的 CPU。
-- 其他 CPU 可以请求唤醒目标。重复请求应安全，pending 事件不能被误清除。
-- 休眠提交与 pending 检查必须原子化：事件先到则拒绝休眠，提交先完成则
-  后续事件唤醒目标，不能存在丢唤醒窗口。定义请求序号和取消规则。
-- 同一物理大核的两个 SMT 线程均就绪后才能进入整核深睡；单个线程恢复
-  可以打开物理核，但不得要求另一个空闲线程也开始运行工作负载。
-- 第一版深睡保留架构上下文，不执行复位，不走固件重新启动流程。
-  后续若研究上下文丢失，必须另行设计每线程保存区、恢复入口、栈、CSR、
-  FPU/LSX/LASX 状态及 SMP 恢复，禁止共享单份恢复上下文。
-- 真实的关核过程可以由 QEMU 提供通过地址空间访问的寄存器来进行。
+- 关断请求必须走 Linux CPU hotplug 生命周期：目标 CPU 先停止接收普通
+  工作并迁移任务/IRQ、执行架构 `cpu_disable`/`cpu_die` 钩子，最后由 QEMU
+  控制器确认该硬件线程已停止执行后才记为 POWERED_DOWN。禁止控制器远程
+  强制停止仍运行任务或尚未完成 hotplug 的 CPU。
+- `cpu_down()` 必须在可睡眠上下文发起，且不能在 cpuidle/IRQ 回调中调用。
+  运行时按 idle 状态自动关核的策略需通过独立协调线程或工作队列请求
+  hotplug；需评估 hotplug 开销、抖动及与调度器/设备 CPU 亲和性的影响。
+- CPU_OFF 成功后架构上下文视为丢失。唤醒源只向常开控制器提交目标硬件
+  CPU mask 和原因；控制器保存 pending 状态并通知仍 online 的管理 CPU，
+  由可睡眠的软件上下文调用 `cpu_up()`。不得向已关断 CPU 发送一个假定其
+  能直接处理中断的普通 IPI，也不得由控制器绕开 Linux 启动流程启动 CPU。
+- CPU_ON 必须经 LoongArch 架构启动钩子把目标 CPU 引导到内核 secondary
+  启动入口（如现有 `__cpu_up()`/`loongson_boot_secondary()` 路径），
+  重新初始化其架构和 per-CPU 状态，完成 CPU hotplug 启动回调后才标记
+  online。它不恢复 CPU_OFF 前的 PC、栈、CSR 或任务上下文；任务已在下线时
+  迁移，重新上线后由调度器分配。
+- 同一物理大核有两个 SMT 线程时，只有两个线程都完成 CPU_OFF/hotplug
+  下线后，控制器才可将物理核记为 POWERED_DOWN。唤醒可以只启动被请求的
+  线程；另一个线程仍保持 offline，不能强迫其承载工作。若设备、IRQ 亲和性
+  或内核约束使任一线程不能下线，整核关断必须被拒绝并记录原因。
+- 休眠请求与唤醒事件需使用单调序号和 pending/ack 语义避免丢失、误清除
+  或旧请求覆盖新请求。下线完成与唤醒并发时，明确取消/排队规则；重复
+  CPU_ON 请求安全且返回可观测状态。
+- “停止时钟”在 QEMU 中定义为目标 vCPU 不再执行 guest 指令、模型中对应
+  CPU/物理核进入 POWERED_DOWN 状态；不声称切断宿主物理时钟。全局 guest
+  时间与常开定时器继续推进；已 offline CPU 的本地定时器停止，其截止事件由
+  常开计时/广播机制转为 CPU_ON 请求。
+- 迁移必须序列化电源状态、请求序号、pending 事件和常开定时器；若第一版
+  未实现则明确阻止 VM migration，不能静默丢失状态。
+- QEMU 通过 MMIO 可实现虚拟电源控制与可观测状态，但不能把宿主 vCPU
+  线程暂停/恢复本身当成完整的 CPU_OFF/CPU_ON 协议。
 - 不以宿主 vCPU 线程的暂停/恢复代替完整的 guest 电源、事件与恢复语义。
 
 ### 6.3 唤醒与定时器
 
 - reschedule IPI、call-function IPI、相关跨核同步、定向外部 IRQ、广播
   定时器和显式唤醒命令均应有明确的可靠唤醒路径。
-- CPU16 可以分配工作，但不能成为所有硬件唤醒的唯一软件中转。
-- 建议提供常开广播定时器，区分 guest 本地定时器与全局时间源。深睡时
-  本地定时器是否停止必须明确，并与 cpuidle/clockevent 标志保持一致。
+- CPU16 负责软件 CPU_ON 和关断确认；对仍 online CPU 的 IRQ/IPI 仍走
+  直接硬件中断路径。常开控制器在管理核浅睡时也必须能接收并保留唤醒事件。
+- 提供常开广播定时器，区分 guest 本地定时器与全局时间源。CPU_OFF 后
+  本地定时器停止；截止事件应由常开计时器通知管理 CPU 并安排 CPU_ON，
+  不能依赖已 offline CPU 的 clockevent。
 - 启用 tick broadcast 不等于将其自动绑定到 CPU16；宿主选择、中断路由、
   目标 CPU 唤醒均需实现和测试。
 - CPU16 初期允许浅睡，由常开控制器唤醒。默认按需唤醒大核，不采用
   “CPU16 每次睡眠前唤醒全部大核”；wake-all 仅作可选调试对照策略。
-- 本研究首先针对运行时 cpuidle，不将其等同于系统 suspend-to-RAM。
+- 本研究针对运行时 CPU hotplug 驱动的关核/重新启动，不将其等同于
+  cpuidle 的保留上下文 idle，也不将其等同于系统 suspend-to-RAM。实验和
+  结论必须单独报告 CPU offline/online 开销；若另做 cpuidle 保留上下文方案，
+  应作独立模式，不能与 CPU_OFF/CPU_ON 数据混为一组。
 
 ## 7. 调度模式与 LASX 安全策略
 
@@ -225,13 +280,14 @@ E_total = sum(P[physical_domain, state] * T[physical_domain, state])
 | --- | --- | --- |
 | P0 | 17 CPU、正确 ACPI 与真实 LASX 差异 | 拓扑正确；受控测试证明 CPU16 无 LASX |
 | P1 | 公共 ISA、容量接入、两种调度模式 | 无非法指令；隔离和任务分配有证据 |
-| P2 | 单物理大核保留上下文深睡 | SMT 协调、状态恢复、事件竞态正确 |
-| P3 | 全大核深睡、常开定时器、CPU16 服务 | 事件处理和按需恢复反复成功，无同步超时 |
+| P2 | 单物理大核 CPU_OFF/CPU_ON | SMT 双线程 hotplug 协调、secondary 启动、拒绝/取消/并发竞态正确 |
+| P3 | 全大核 CPU_OFF、常开定时器、CPU16 服务及按需 CPU_ON | 事件经管理 CPU 正确触发 CPU_ON；重复启动、定时器、IRQ/IPI、超时和全核离线恢复反复通过 |
 | P4 | 活动采集、独立能耗分析与参数扫描 | A/B/C/D 可复现，性能约束与收益边界清楚 |
 | P5 | 大核 LASX 执行域、可选性能模型 | 完整生命周期安全，模型假设可审计 |
 
-每阶段通过后再组合。真实上下文丢失恢复、从小核启动、透明异常迁移和
-SMT-aware EAS 均不属于最小可运行版本。
+每阶段通过后再组合。CPU_OFF/CPU_ON 明确丢弃目标 CPU 架构上下文，并依赖
+Linux hotplug 迁移任务及 secondary 启动入口，不实现透明任务/异常上下文
+迁移；从小核启动和 SMT-aware EAS 均不属于最小可运行版本。
 
 ## 10. 测试、构建与结果记录
 

@@ -1399,6 +1399,11 @@ static int cpuhp_down_callbacks(unsigned int cpu, struct cpuhp_cpu_state *st,
 	return ret;
 }
 
+bool __weak arch_cpu_hotplug_protected(unsigned int cpu)
+{
+	return false;
+}
+
 /* Requires cpu_add_remove_lock to be held */
 static int __ref _cpu_down(unsigned int cpu, int tasks_frozen,
 			   enum cpuhp_state target)
@@ -1413,6 +1418,12 @@ static int __ref _cpu_down(unsigned int cpu, int tasks_frozen,
 		return -EINVAL;
 
 	cpus_write_lock();
+
+	/* Reject before parking any of the protected CPU's management threads. */
+	if (arch_cpu_hotplug_protected(cpu)) {
+		ret = -EPERM;
+		goto out;
+	}
 
 	/*
 	 * Keep at least one housekeeping cpu onlined to avoid generating
@@ -2755,6 +2766,11 @@ static ssize_t target_store(struct device *dev, struct device_attribute *attr,
 	if (ret)
 		return ret;
 
+	if (arch_cpu_hotplug_protected(dev->id)) {
+		ret = -EPERM;
+		goto out;
+	}
+
 	mutex_lock(&cpuhp_state_mutex);
 	sp = cpuhp_get_step(target);
 	ret = !sp->name || sp->cant_stop ? -EINVAL : 0;
@@ -2788,6 +2804,9 @@ static ssize_t fail_store(struct device *dev, struct device_attribute *attr,
 	struct cpuhp_cpu_state *st = per_cpu_ptr(&cpuhp_state, dev->id);
 	struct cpuhp_step *sp;
 	int fail, ret;
+
+	if (arch_cpu_hotplug_protected(dev->id))
+		return -EPERM;
 
 	ret = kstrtoint(buf, 10, &fail);
 	if (ret)
@@ -2849,9 +2868,20 @@ static struct attribute *cpuhp_cpu_attrs[] = {
 	NULL
 };
 
+static umode_t cpuhp_cpu_attr_visible(struct kobject *kobj,
+				    struct attribute *attr, int index)
+{
+	struct device *dev = kobj_to_dev(kobj);
+
+	if (arch_cpu_hotplug_protected(dev->id) && attr != &dev_attr_state.attr)
+		return 0;
+	return attr->mode;
+}
+
 static const struct attribute_group cpuhp_cpu_attr_group = {
 	.attrs = cpuhp_cpu_attrs,
 	.name = "hotplug",
+	.is_visible = cpuhp_cpu_attr_visible,
 };
 
 static ssize_t states_show(struct device *dev, struct device_attribute *attr, char *buf)

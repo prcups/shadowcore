@@ -126,6 +126,10 @@ bool loongarch_cpu_has_work(CPUState *cs)
 {
     bool has_work = false;
 
+    if (qatomic_read(&LOONGARCH_CPU(cs)->shadowcore_powered_off)) {
+        return false;
+    }
+
     if (cpu_test_interrupt(cs, CPU_INTERRUPT_HARD) &&
         cpu_loongarch_hw_interrupts_pending(cpu_env(cs))) {
         has_work = true;
@@ -628,6 +632,8 @@ static void loongarch_cpu_reset_hold(Object *obj, ResetType type)
     LoongArchCPUClass *lacc = LOONGARCH_CPU_GET_CLASS(obj);
     CPULoongArchState *env = cpu_env(cs);
     CPUSysState *sys = env_sys(env);
+
+    qatomic_set(&LOONGARCH_CPU(cs)->shadowcore_powered_off, false);
 
     if (lacc->parent_phases.hold) {
         lacc->parent_phases.hold(obj, type);

@@ -63,7 +63,7 @@ void virt_shadowcore_dsdt(Aml *dsdt, LoongArchVirtMachineState *lvms)
     Aml *dev = aml_device("SCPM");
     Aml *crs = aml_resource_template();
     Aml *dsd = aml_package(2);
-    Aml *props = aml_package(10);
+    Aml *props = aml_package(11);
     Aml *uids = aml_package(cpus->len);
     Aml *hwids = aml_package(cpus->len);
     Aml *cores = aml_package(cpus->len);
@@ -117,8 +117,9 @@ void virt_shadowcore_dsdt(Aml *dsdt, LoongArchVirtMachineState *lvms)
                     SHADOWCORE_TEST_MACHINE(lvms)->little_capacity : 1024));
     }
     property(props, "shadowcore,abi-version", aml_int(SHADOWCORE_ABI_VERSION));
-    property(props, "shadowcore,capabilities", aml_int(SHADOWCORE_CAP_DISCOVERY));
+    property(props, "shadowcore,capabilities", aml_int(SHADOWCORE_CAPABILITIES));
     property(props, "shadowcore,cpu-count", aml_int(cpus->len));
+    property(props, "shadowcore,manager-uid", aml_int(SHADOWCORE_BIG_THREADS));
     property(props, "shadowcore,cpu-uids", uids);
     property(props, "shadowcore,hw-ids", hwids);
     property(props, "shadowcore,core-ids", cores);

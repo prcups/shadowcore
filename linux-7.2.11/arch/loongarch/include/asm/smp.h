@@ -32,7 +32,7 @@ extern cpumask_t cpu_foreign_map[];
 
 void loongson_smp_setup(void);
 void loongson_prepare_cpus(unsigned int max_cpus);
-void loongson_boot_secondary(int cpu, struct task_struct *idle);
+int loongson_boot_secondary(int cpu, struct task_struct *idle);
 void loongson_init_secondary(void);
 void loongson_smp_finish(void);
 #ifdef CONFIG_HOTPLUG_CPU

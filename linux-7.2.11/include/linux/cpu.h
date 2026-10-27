@@ -90,6 +90,8 @@ struct device *cpu_device_create(struct device *parent, void *drvdata,
 				 const struct attribute_group **groups,
 				 const char *fmt, ...);
 extern bool arch_cpu_is_hotpluggable(int cpu);
+/* Platform-designated management CPUs must not enter hotplug teardown. */
+bool arch_cpu_hotplug_protected(unsigned int cpu);
 extern int arch_register_cpu(int cpu);
 extern void arch_unregister_cpu(int cpu);
 #ifdef CONFIG_HOTPLUG_CPU

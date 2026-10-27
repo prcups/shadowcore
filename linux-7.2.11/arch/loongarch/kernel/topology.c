@@ -7,12 +7,18 @@
 #include <linux/nodemask.h>
 #include <linux/percpu.h>
 #include <asm/bootinfo.h>
+#include <asm/shadowcore.h>
 
 #include <acpi/processor.h>
 
 #ifdef CONFIG_HOTPLUG_CPU
+bool arch_cpu_hotplug_protected(unsigned int cpu)
+{
+	return shadowcore_cpu_is_manager(cpu);
+}
+
 bool arch_cpu_is_hotpluggable(int cpu)
 {
-	return !io_master(cpu);
+	return !io_master(cpu) && !shadowcore_cpu_is_manager(cpu);
 }
 #endif

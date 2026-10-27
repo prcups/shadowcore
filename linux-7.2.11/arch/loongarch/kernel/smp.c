@@ -34,6 +34,7 @@
 #include <asm/paravirt.h>
 #include <asm/processor.h>
 #include <asm/setup.h>
+#include <asm/shadowcore.h>
 #include <asm/time.h>
 
 int __cpu_number_map[NR_CPUS];   /* Map physical to logical */
@@ -404,9 +405,10 @@ void __init loongson_prepare_cpus(unsigned int max_cpus)
 /*
  * Setup the PC, SP, and TP of a secondary processor and start it running!
  */
-void loongson_boot_secondary(int cpu, struct task_struct *idle)
+int loongson_boot_secondary(int cpu, struct task_struct *idle)
 {
 	unsigned long entry;
+	int ret;
 
 	pr_info("Booting CPU#%d...\n", cpu);
 
@@ -414,10 +416,20 @@ void loongson_boot_secondary(int cpu, struct task_struct *idle)
 	cpuboot_data.task = (unsigned long)idle;
 	cpuboot_data.stack = (unsigned long)task_pt_regs(idle);
 	cpuboot_data.offset = per_cpu_offset(cpu);
+	smp_wmb();
 
+	/* A genuinely powered-off CPU starts directly at smpboot_entry. */
+	ret = shadowcore_cpu_on(cpu, entry);
+	if (!ret)
+		return 0;
+	if (ret != -ENODEV && ret != -EALREADY)
+		return ret;
+
+	/* Initial boot and ordinary virt retain their firmware mailbox path. */
 	csr_mail_send(entry, cpu_logical_map(cpu), 0);
 
 	loongson_send_ipi_single(cpu, ACTION_BOOT_CPU);
+	return 0;
 }
 
 /*
@@ -457,7 +469,11 @@ int loongson_cpu_disable(void)
 {
 	unsigned long flags;
 	unsigned int cpu = smp_processor_id();
+	int ret;
 
+	ret = shadowcore_cpu_disable(cpu);
+	if (ret)
+		return ret;
 	if (io_master(cpu))
 		return -EBUSY;
 
@@ -479,6 +495,13 @@ int loongson_cpu_disable(void)
 
 void loongson_cpu_die(unsigned int cpu)
 {
+	int ret = shadowcore_cpu_wait_off(cpu);
+
+	if (ret != -ENODEV) {
+		if (ret)
+			panic("Shadowcore: CPU%u failed to power off: %d", cpu, ret);
+		return;
+	}
 	while (per_cpu(cpu_state, cpu) != CPU_DEAD)
 		cpu_relax();
 
@@ -489,13 +512,22 @@ static void __noreturn idle_play_dead(void)
 {
 	register uint64_t addr;
 	register void (*init_fn)(void);
+	int ret;
 
 	idle_task_exit();
-	local_irq_enable();
-	set_csr_ecfg(ECFGF_IPI);
+	local_irq_disable();
 	__this_cpu_write(cpu_state, CPU_DEAD);
 
 	__smp_mb();
+	ret = shadowcore_cpu_off(smp_processor_id());
+	/* Successful Shadowcore CPU_OFF never returns to this stack. */
+	if (ret != -ENODEV)
+		panic("Shadowcore: CPU_OFF returned on CPU%u: %d",
+		      smp_processor_id(), ret);
+
+	/* A machine without the controller uses the original native idle path. */
+	set_csr_ecfg(ECFGF_IPI);
+	local_irq_enable();
 	do {
 		__asm__ __volatile__("idle 0\n\t");
 		addr = iocsr_read64(LOONGARCH_IOCSR_MBUF0);
@@ -647,17 +679,29 @@ void __init smp_prepare_cpus(unsigned int max_cpus)
 
 int __cpu_up(unsigned int cpu, struct task_struct *tidle)
 {
-	loongson_boot_secondary(cpu, tidle);
+	int ret;
+
+	reinit_completion(&cpu_starting);
+	reinit_completion(&cpu_running);
+	ret = loongson_boot_secondary(cpu, tidle);
+
+	if (ret)
+		return ret;
 
 	/* Wait for CPU to start and be ready to sync counters */
 	if (!wait_for_completion_timeout(&cpu_starting,
 					 msecs_to_jiffies(5000))) {
+		shadowcore_cpu_start_failed(cpu);
 		pr_crit("CPU%u: failed to start\n", cpu);
 		return -EIO;
 	}
 
 	/* Wait for CPU to finish startup & mark itself online before return */
-	wait_for_completion(&cpu_running);
+	if (!wait_for_completion_timeout(&cpu_running, msecs_to_jiffies(5000))) {
+		shadowcore_cpu_start_failed(cpu);
+		pr_crit("CPU%u: failed to complete startup\n", cpu);
+		return -EIO;
+	}
 
 	return 0;
 }
