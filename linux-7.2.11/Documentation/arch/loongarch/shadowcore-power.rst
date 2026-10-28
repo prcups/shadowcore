@@ -6,8 +6,13 @@ CPU before it powers itself off. A dedicated kthread worker, bound to the CPU
 identified by the little/manager role (CPU16 in the default enumeration),
 performs CPU_ON and checks OFF completion. The manager remains online, has no
 per-CPU sysfs online control, and is rejected by both the architecture
-CPU-disable hook and the device CPU_OFF command. CPU0 retains the existing
-architecture IO-master restriction.
+CPU-disable hook and the device CPU_OFF command. CPU0 performs early boot.
+Once the management worker is ready, software IO-master ownership is handed
+from CPU0 to the manager, then the manager enables the MMIO Shadow switch.
+The always-on EIO/PCH fabric remains instantiated; this does not relocate the
+ACPI EIO controller node or rebuild IRQ domains. CPU0's online control is
+published after successful handoff. At least one user-capable CPU is retained
+outside system freezing, because user tasks cannot fall back to the manager.
 The generic hotplug core also rejects management-CPU teardown before parking
 threads; its hotplug/target and hotplug/fail controls are hidden. The driver
 removes controls already created before platform discovery, and subsequent
@@ -88,14 +93,56 @@ normal timers and IRQs to online CPUs.
 Verification boundary
 ---------------------
 
-The ABI 1.0 change is source-reviewed only, without compilation or runtime
+The CPU power implementation is source-reviewed only, without compilation or runtime
 tests at the user's request. Acceptance still requires repeated hotplug,
 manager offline rejection, concurrent requests, IRQ/IPI while OFF, SMT states,
 reset with queued work and plain virt regression checks with bounded timeouts.
-CPU0 offline and all-big-cores-off are not claimed by this change.
+CPU0 hotplug is enabled after handoff but is not runtime-verified by this
+change. An all-big-cores-off system-sleep policy is not implemented.
 Missing hardware acknowledgements or a managed CPU's startup timeout stop the
 kernel explicitly; recoverable cancellation of a late CPU_ON is not implemented.
 The driver's read-only manager_cpu and power_state attributes expose the
 resolved manager and per-thread/domain states and counters. Multiple reads
 during a transition are not an atomic snapshot; use completed sequences to
 identify finished operations.
+
+Shadow routing and user tasks
+-----------------------------
+
+Capability bit 2 advertises the following global registers, all aligned
+little-endian 32-bit MMIO: 0x40 CONTROL (0 normal, 1 Shadow), 0x44 OWNER (read-only
+manager hardware ID), 0x48 RESULT (0 success, 1 denied/unsupported), and 0x4c
+SWITCHES (read-only modulo counter). Only the running manager vCPU may write
+CONTROL. Other bits/values are rejected. Repeated requests are idempotent;
+reset disables Shadow and clears counters. Switching happens under the BQL.
+
+In Shadow, the final EXTIOI destination of every external vector is the manager.
+All instantiated PIC, PCI INTx, MSI, GED, UART and RTC interrupt paths converge
+on that controller. IPI and local timer/CPU interrupts keep their per-CPU target
+semantics. DMSI uses per-CPU message-vector namespaces and is disabled on this
+fixed research machine; explicit dmsi=on fails before boot. Plain virt keeps its
+existing model. Traditional EXTIOI decoding retains virt's single-bank rule:
+the least significant set bit selects CPU0 through CPU3 (other values select
+CPU0). Only CPU-encoded mode interprets a route byte as a full hardware ID.
+Shadow directly selects the mapped manager and does not require that extension.
+
+Guest route registers remain the requested normal-mode routes. Pending latched
+unacknowledged vectors are moved on enable/disable; masked input status remains
+pending until unmask. Acknowledged vectors are not recreated from input levels.
+Linux effective_affinity records the Shadow target, while requested affinity
+can still differ. The mode is activated by the bound kernel worker only after
+the manager is online and software IO-master ownership has been transferred.
+The driver exposes read-only shadow_mode and user_cpus for inspection.
+
+A revision-1 SHCT ACPI table is consumed after MADT parsing and before user-task
+creation. Its 20-byte body is ABI version (u32), manager UID (u32), hardware ID
+(u32), policy flags (u32, currently 1), and reserved zero (u32). AML and MMIO
+identity must agree with this early declaration. User task possible/fallback
+masks exclude the manager; fork, affinity and cpuset use this domain. Kernel
+threads retain the full possible mask so bound power/IRQ services can execute.
+This policy persists for the boot epoch and does not implement ISA emulation.
+
+These Shadow and scheduling changes are source-reviewed only. Compilation and
+runtime verification are deferred at the user's request. Needed checks include
+pending IRQ movement, masks and acknowledgement, normal-mode route restoration,
+reset, CPU0 hotplug, user affinity/fork/cpuset exclusion, and plain virt boot.

@@ -74,10 +74,13 @@ shadowcore-test/
 ├── qemu-11.1.2/        # QEMU 源码
 ```
 
-设计文档应集中记录电源协议、CPU 映射、计量模型和实验矩阵。构建产物、磁盘
-镜像、大型 trace 和原始结果与源码分离。Linux 与 QEMU 分别使用各自源码树根
-目录下的 `build/` 作为独立输出目录；这些目录不纳入版本管理。普通构建不要求
-为每次运行保留日志、状态文件或构建记录。
+设计文档应集中记录电源协议、CPU 映射、计量模型和实验矩阵。Linux 和 QEMU
+默认都从各自源码根目录执行构建命令，不指定额外输出目录，不手动创建 build
+文件夹。Linux 使用源码根目录的 .config 并直接执行 make ARCH=loongarch；
+QEMU 从源码根目录执行 ./configure 和 make，其默认脚本会自行生成 build/ 和
+GNUmakefile，允许这些自动生成目录，不把它们误称为源码根目录内直接输出。
+既有构建产物不得为切换构建方式而擅自删除。大型镜像、trace 和原始实验结果
+仍应与源码分离，生成物不纳入版本管理。普通构建无需逐次保存日志或构建记录。
 
 ## 5. ACPI 与拓扑
 
@@ -124,6 +127,11 @@ linux-7.2.11/Documentation/arch/loongarch/shadowcore-power.rst。
 - CPU_OFF 由目标大核自身在 hotplug 拆卸完成后提交，最终命令写入不持有
   任何需要继续执行才能释放的锁。成功后不返回旧执行路径；QEMU 使用
   async_run_on_cpu() 在目标 vCPU 安全点停用本地定时器并确认 OFF。
+- 增加 MMIO Shadow 模式（0x40 开关、0x44 固定管理核硬件 ID、0x48 结果、
+  0x4c 切换计数）。CPU0 完成早期启动，CPU16 就绪后通过管理线程接管软件
+  IO-master 标记并开启 Shadow；所有 PIC/MSI 经 EXTIOI 的外部中断实际投递到
+  CPU16，原路由寄存器仍可编程，模式切换保留未确认 pending。IPI 和每 CPU
+  本地定时器保持定向语义。该平台不启用 DMSI，显式 dmsi=on 返回不支持。
 - 管理 CPU 固定为小核角色（默认 CPU16），通过 ACPI manager-uid、UID/
   硬件 ID/角色建立映射；CPU_ON 和 OFF 状态确认由绑定该 CPU 的管理线程执行。
   小核保持 online，禁止 Linux 下线、移除其 per-CPU sysfs online 控制文件，
@@ -196,12 +204,16 @@ ONLINE/RUNNING -> OFFLINING -> CPU_OFF -> OFFLINE/POWERED_DOWN
 
 ### 7.1 两种模式分别验收
 
-**服务核模式**：CPU16 保持 online，但退出普通负载均衡。普通用户任务
-运行在 CPU0–CPU15；CPU16 只执行显式绑定且经过审计的线程、IRQ 和工作。
-隔离不代表禁止显式 affinity，也不是安全隔离边界。不能将全部 housekeeping、
-所有 unbound workqueue 或设备中断无条件压到小核。
+**服务核模式**：当前平台通过早期 ACPI SHCT 表固定用户任务可执行 CPU 范围，
+CPU16 保持 online，仅内核线程可运行；用户进程的 affinity、cpuset 和 fork 均
+不能将其放到管理核，单独请求 CPU16 的用户 affinity 返回错误。内核调度仍
+保留，以运行电源管理、IRQ 线程及必要后续处理。Shadow 将外部 IRQ 投递管理核，
+不将全部 housekeeping 或 unbound workqueue 强制绑定该核。这是平台调度政策，
+不是安全隔离边界。普通运行时至少保留一个用户任务可执行大核；关闭最后一个
+大核需另行实现冻结用户任务及由管理内核线程协调的系统睡眠流程。
 
-**混合调度模式**：解除 CPU16 的调度隔离，以较低 capacity 参与普通调度。
+**混合调度模式**：是后续独立策略，需要先修改早期用户任务 CPU 范围，不能
+仅更改 affinity 就启用。解除 CPU16 的调度隔离后，以较低 capacity 参与普通调度。
 先保证可迁移软件满足公共 ISA，再观察任务放置、利用率和迁移。不能把
 服务核隔离成功表述为自动异构调度成功。
 
@@ -292,14 +304,17 @@ Linux hotplug 迁移任务及 secondary 启动入口，不实现透明任务/异
 ## 10. 测试、构建与结果记录
 
 - 改动前检查工作区和适用的子目录指南，保留用户修改，不做破坏性清理。
-- Linux 构建输出放在 `linux-7.2.11/build/` 下，显式设置 `ARCH=loongarch`，
-  按实际工具链选择交叉编译或 LLVM 参数，并使用 `O=` 指向该目录中的独立
-  配置子目录。QEMU 构建输出放在 `qemu-11.1.2/build/` 下，使用独立构建
-  子目录，目标包括 `loongarch64-softmmu`。固件副本、测试内核/initramfs 等
-  生成物也放入对应源码树的 `build/`。命令须先适配本目录实际源码及工具链，
-  不将未执行的示例写成验证结果。普通构建和窄测试只需查看即时输出，不要求
-  逐次保存日志、状态文件、补丁快照或校验清单；正式实验仍按本节实验记录约束
-  保存复现所需资料。
+- Linux、QEMU 的构建命令默认在各自源码根目录执行，不手动创建 build
+  文件夹，不使用 O=build 或自建配置子目录。Linux 使用 make ARCH=loongarch；
+  QEMU 首次在源码根目录运行 ./configure，随后运行 make，允许默认脚本自动
+  生成 build/。QEMU 目标包括 loongarch64-softmmu；使用既有构建目录时保留其
+  产物，不为符合新约束做破坏性清理。
+  调试用 Linux 配置开启 CONFIG_DEBUG_KERNEL、CONFIG_DEBUG_INFO（优先 DWARF5），
+  保留 CONFIG_KALLSYMS_ALL，关闭 CONFIG_RANDOMIZE_BASE，使调试符号可用且
+  启动地址不随机化。按实际工具链显式配置编译器、汇编器和链接器。
+  固件副本、测试镜像等使用默认生成物目录或单独的生成物位置，不覆盖既有
+  实验数据。不把未执行的命令写成验证结果；普通构建和窄测试只查看即时输出，
+  正式实验按本节保存复现所需资料。
 - 本项目不提交上游，仅进行本地学术研究与测试，不需要严格遵循上游要求的代码
   风格和约定。
 - 优先运行窄测试再构建受影响目标。协议测试覆盖正常/重复/取消请求、

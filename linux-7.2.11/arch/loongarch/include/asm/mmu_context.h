@@ -16,6 +16,12 @@
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
 #include <asm-generic/mm_hooks.h>
+#include <asm/shadowcore.h>
+
+#ifdef CONFIG_LOONGARCH_SHADOWCORE
+#define task_cpu_possible_mask(p) shadowcore_task_cpus(p)
+#define task_cpu_fallback_mask(p) shadowcore_fallback_cpus(p)
+#endif
 
 /*
  *  All unused by hardware upper bits will be considered

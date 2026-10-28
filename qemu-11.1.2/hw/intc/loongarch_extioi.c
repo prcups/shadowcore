@@ -8,6 +8,7 @@
 #include "qemu/osdep.h"
 #include "qemu/module.h"
 #include "qemu/log.h"
+#include "qemu/main-loop.h"
 #include "qapi/error.h"
 #include "hw/core/irq.h"
 #include "hw/loongarch/virt.h"
@@ -39,7 +40,7 @@ static void extioi_update_irq(LoongArchExtIOICommonState *s, int irq, int level)
     int ipnum, cpu, found, irq_index, irq_mask;
 
     ipnum = s->sw_ipmap[irq / 32];
-    cpu = s->sw_coremap[irq];
+    cpu = s->shadow_cpu >= 0 ? s->shadow_cpu : s->sw_coremap[irq];
     irq_index = irq / 32;
     irq_mask = 1 << (irq & 0x1f);
 
@@ -77,6 +78,44 @@ static void extioi_setirq(void *opaque, int irq, int level)
         clear_bit32(irq, s->isr);
     }
     extioi_update_irq(s, irq, level);
+}
+
+bool loongarch_extioi_set_shadow(DeviceState *dev, uint64_t arch_id, bool enable)
+{
+    LoongArchExtIOICommonState *s = LOONGARCH_EXTIOI_COMMON(dev);
+    uint32_t pending[EXTIOI_IRQS_GROUP_COUNT] = { 0 };
+    int target = enable ? extioi_get_index_from_archid(s, arch_id) : -1;
+    unsigned cpu, group, pin, bit;
+
+    assert(bql_locked());
+    if ((enable && target < 0) || kvm_irqchip_in_kernel()) {
+        return false;
+    }
+    if (s->shadow_cpu == target) {
+        return true;
+    }
+    /* Move only latched, unacknowledged IRQs; ISR input levels alone could
+     * recreate interrupts already acknowledged by the guest. Masked inputs
+     * remain in s->isr and are delivered normally when unmasked. */
+    for (cpu = 0; cpu < s->num_cpu; cpu++) {
+        for (group = 0; group < EXTIOI_IRQS_GROUP_COUNT; group++) {
+            pending[group] |= s->cpu[cpu].coreisr[group];
+        }
+        memset(s->cpu[cpu].coreisr, 0, sizeof(s->cpu[cpu].coreisr));
+        memset(s->cpu[cpu].sw_isr, 0, sizeof(s->cpu[cpu].sw_isr));
+        for (pin = 0; pin < LS3A_INTC_IP; pin++) {
+            qemu_set_irq(s->cpu[cpu].parent_irq[pin], 0);
+        }
+    }
+    s->shadow_cpu = target;
+    for (group = 0; group < EXTIOI_IRQS_GROUP_COUNT; group++) {
+        while (pending[group]) {
+            bit = ctz32(pending[group]);
+            pending[group] &= ~(1U << bit);
+            extioi_update_irq(s, group * 32 + bit, 1);
+        }
+    }
+    return true;
 }
 
 static MemTxResult extioi_readw(void *opaque, hwaddr addr, uint64_t *data,
@@ -156,6 +195,8 @@ static inline void extioi_update_sw_coremap(LoongArchExtIOICommonState *s,
         val = val >> 8;
 
         if (!(s->status & BIT(EXTIOI_ENABLE_CPU_ENCODE))) {
+            /* Preserve virt's legacy single-bank, four-CPU decoding.
+             * Shadow overrides delivery independently of this route. */
             cpuid = ctz32(cpuid);
             cpuid = (cpuid >= 4) ? 0 : cpuid;
         }
@@ -169,7 +210,9 @@ static inline void extioi_update_sw_coremap(LoongArchExtIOICommonState *s,
             continue;
         }
 
-        if (notify && test_bit32(irq + i, s->isr)) {
+        if (s->shadow_cpu >= 0) {
+            s->sw_coremap[irq + i] = cpu;
+        } else if (notify && test_bit32(irq + i, s->isr)) {
             /*
              * lower irq at old cpu and raise irq at new cpu
              */

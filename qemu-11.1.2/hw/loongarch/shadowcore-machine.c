@@ -65,6 +65,13 @@ static void shadowcore_test_init(MachineState *ms)
         error_report("shadowcore-test currently supports TCG only");
         exit(EXIT_FAILURE);
     }
+    /* Shadow covers the PIC/MSI -> EXTIOI hierarchy. Direct MSI vectors are
+     * per-CPU and cannot be redirected without changing their OS namespace. */
+    if (lvms->dmsi == ON_OFF_AUTO_ON) {
+        error_report("shadowcore-test Shadow routing requires dmsi=off");
+        exit(EXIT_FAILURE);
+    }
+    lvms->dmsi = ON_OFF_AUTO_OFF;
     parent->init(ms);
     /* Direct kernel boot publishes only FDT, not the firmware-loaded ACPI. */
     if (!lvms->bios_loaded) {

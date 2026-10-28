@@ -544,6 +544,8 @@ static void acpi_build(AcpiBuildTables *tables, MachineState *machine)
     acpi_add_table(table_offsets, tables_blob);
     if (virt_is_shadowcore(lvms)) {
         virt_shadowcore_pptt(tables_blob, tables->linker, lvms);
+        acpi_add_table(table_offsets, tables_blob);
+        virt_shadowcore_control_table(tables_blob, tables->linker, lvms);
     } else {
         build_pptt(tables_blob, tables->linker, machine, lvms->oem_id,
                    lvms->oem_table_id, 0, NULL);

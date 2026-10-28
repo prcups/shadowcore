@@ -4826,6 +4826,15 @@ late_initcall(sched_core_sysctl_init);
  */
 int sched_fork(u64 clone_flags, struct task_struct *p)
 {
+	/* A user child of a bound kernel service must still obey the user ISA
+	 * domain. Ordinary user children inherit an already compatible mask. */
+	if (!(p->flags & PF_KTHREAD) &&
+	    !cpumask_subset(&p->cpus_mask, task_cpu_possible_mask(p))) {
+		cpumask_and(&p->cpus_mask, &p->cpus_mask, task_cpu_possible_mask(p));
+		if (cpumask_empty(&p->cpus_mask))
+			cpumask_copy(&p->cpus_mask, task_cpu_possible_mask(p));
+		p->nr_cpus_allowed = cpumask_weight(&p->cpus_mask);
+	}
 	__sched_fork(clone_flags, p);
 	/*
 	 * We mark the process as NEW here. This guarantees that
@@ -8921,6 +8930,8 @@ int sched_cpu_dying(unsigned int cpu)
 
 void __init sched_init_smp(void)
 {
+	cpumask_var_t init_mask;
+
 	sched_init_numa(NUMA_NO_NODE);
 
 	prandom_init_once(&sched_rnd_state);
@@ -8935,8 +8946,13 @@ void __init sched_init_smp(void)
 	sched_domains_mutex_unlock();
 
 	/* Move init over to a non-isolated CPU */
-	if (set_cpus_allowed_ptr(current, housekeeping_cpumask(HK_TYPE_DOMAIN)) < 0)
+	if (!alloc_cpumask_var(&init_mask, GFP_KERNEL))
+		panic("Unable to allocate init CPU mask");
+	cpumask_and(init_mask, housekeeping_cpumask(HK_TYPE_DOMAIN),
+		    task_cpu_possible_mask(current));
+	if (set_cpus_allowed_ptr(current, init_mask) < 0)
 		BUG();
+	free_cpumask_var(init_mask);
 	current->flags &= ~PF_NO_SETAFFINITY;
 	sched_init_granularity();
 

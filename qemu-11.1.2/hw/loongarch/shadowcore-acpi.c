@@ -55,6 +55,24 @@ static void property(Aml *properties, const char *name, Aml *value)
     aml_append(properties, pair);
 }
 
+/* Early service policy: available before AML/device probing or user tasks. */
+void virt_shadowcore_control_table(GArray *data, BIOSLinker *linker,
+                                  LoongArchVirtMachineState *lvms)
+{
+    const CPUArchIdList *cpus = MACHINE_GET_CLASS(lvms)->possible_cpu_arch_ids(MACHINE(lvms));
+    unsigned manager = SHADOWCORE_BIG_THREADS;
+    AcpiTable table = { .sig = "SHCT", .rev = 1,
+        .oem_id = lvms->oem_id, .oem_table_id = lvms->oem_table_id };
+
+    acpi_table_begin(&table, data);
+    build_append_int_noprefix(data, SHADOWCORE_ABI_VERSION, 4);
+    build_append_int_noprefix(data, manager, 4); /* ACPI UID */
+    build_append_int_noprefix(data, cpus->cpus[manager].arch_id, 4);
+    build_append_int_noprefix(data, 1, 4); /* manager excluded from user ISA domain */
+    build_append_int_noprefix(data, 0, 4); /* reserved */
+    acpi_table_end(linker, &table);
+}
+
 void virt_shadowcore_dsdt(Aml *dsdt, LoongArchVirtMachineState *lvms)
 {
     MachineState *ms = MACHINE(lvms);

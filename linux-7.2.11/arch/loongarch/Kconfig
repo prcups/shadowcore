@@ -825,6 +825,7 @@ source "arch/loongarch/kvm/Kconfig"
 config LOONGARCH_SHADOWCORE
 	bool "Shadowcore ACPI capacity and CPU power management"
 	depends on ACPI && SMP && 64BIT && HOTPLUG_CPU
+	select LOONGSON_EIOINTC
 	help
 	  Receive the versioned SHDW0001 ABI on shadowcore-test.
 	  Validate ACPI CPU UIDs, hardware IDs, PPTT grouping and MMIO records

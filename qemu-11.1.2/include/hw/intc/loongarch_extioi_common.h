@@ -85,6 +85,8 @@ struct LoongArchExtIOICommonState {
     uint32_t sw_pending[EXTIOI_IRQS / 32];
     uint8_t  sw_ipmap[EXTIOI_IRQS_IPMAP_SIZE];
     uint8_t  sw_coremap[EXTIOI_IRQS];
+    /* Shadow overrides destinations without replacing guest route registers. */
+    int shadow_cpu;
     qemu_irq irq[EXTIOI_IRQS];
     ExtIOICore *cpu;
     MemoryRegion extioi_system_mem;

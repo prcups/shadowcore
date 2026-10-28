@@ -15,6 +15,11 @@
 #include <linux/kthread.h>
 #include <linux/sched/task.h>
 #include <linux/topology.h>
+#include <linux/sched/isolation.h>
+#include <linux/unaligned.h>
+#include <linux/freezer.h>
+#include <linux/interrupt.h>
+#include <asm/bootinfo.h>
 #include <asm/smp.h>
 #include <asm/shadowcore.h>
 #include <asm/topology.h>
@@ -23,7 +28,12 @@
 #define SC_MAGIC           0x53484352
 #define SC_DISCOVERY       BIT(0)
 #define SC_CPU_POWER       BIT(1)
-#define SC_CAPABILITIES    (SC_DISCOVERY | SC_CPU_POWER)
+#define SC_SHADOW          BIT(2)
+#define SC_CAPABILITIES    (SC_DISCOVERY | SC_CPU_POWER | SC_SHADOW)
+#define SC_SHADOW_CONTROL  0x40
+#define SC_SHADOW_OWNER    0x44
+#define SC_SHADOW_RESULT   0x48
+#define SC_SHADOW_SWITCHES 0x4c
 #define SC_RECORD_BASE     0x100
 #define SC_RECORD_SIZE     0x20
 #define SC_MMIO_SIZE       0x1000
@@ -57,6 +67,8 @@ struct sc_platform {
 	void __iomem *regs;
 	unsigned int manager;
 	struct kthread_worker *worker;
+	unsigned long saved_io_master[NR_WORDS];
+	bool boot_online_file;
 };
 
 static atomic_t topology_changed = ATOMIC_INIT(0);
@@ -64,10 +76,84 @@ static DEFINE_MUTEX(sc_lock);
 static bool installed;
 static struct sc_platform *sc_live;
 static int sc_manager_cpu = -1;
+static cpumask_t sc_user_cpus __ro_after_init;
+static bool sc_early_ready __ro_after_init;
+static bool sc_shadow_active;
+
+void __init shadowcore_early_init(void)
+{
+	struct acpi_table_header *table;
+	const u8 *body;
+	u32 uid, hwid, found_uid;
+	unsigned int cpu;
+
+	if (ACPI_FAILURE(acpi_get_table("SHCT", 0, &table)))
+		return;
+	body = (const u8 *)(table + 1);
+	if (table->revision != 1 || table->length != sizeof(*table) + 20 ||
+	    get_unaligned_le32(body) != SC_ABI ||
+	    get_unaligned_le32(body + 12) != 1 || get_unaligned_le32(body + 16))
+		panic("Shadowcore: invalid early service policy table");
+	uid = get_unaligned_le32(body + 4);
+	hwid = get_unaligned_le32(body + 8);
+	for_each_possible_cpu(cpu)
+		if (cpu_logical_map(cpu) == hwid &&
+		    !acpi_get_cpu_uid(cpu, &found_uid) && uid == found_uid)
+			break;
+	if (cpu >= nr_cpu_ids || cpu == 0)
+		panic("Shadowcore: management CPU must be a mapped secondary");
+	sc_manager_cpu = cpu;
+	cpumask_copy(&sc_user_cpus, cpu_possible_mask);
+	cpumask_clear_cpu(cpu, &sc_user_cpus);
+	if (cpumask_empty(&sc_user_cpus))
+		panic("Shadowcore: no CPU available for user tasks");
+	sc_early_ready = true;
+	acpi_put_table(table);
+}
+
+const struct cpumask *shadowcore_task_cpus(struct task_struct *task)
+{
+	if (sc_early_ready && !(task->flags & PF_KTHREAD))
+		return &sc_user_cpus;
+	return cpu_possible_mask;
+}
+
+const struct cpumask *shadowcore_fallback_cpus(struct task_struct *task)
+{
+	if (sc_early_ready && !(task->flags & PF_KTHREAD))
+		return &sc_user_cpus;
+	return housekeeping_cpumask(HK_TYPE_DOMAIN);
+}
+
+int shadowcore_irq_target(void)
+{
+	return smp_load_acquire(&sc_shadow_active) ? READ_ONCE(sc_manager_cpu) : -1;
+}
 
 bool shadowcore_cpu_is_manager(unsigned int cpu)
 {
 	return READ_ONCE(sc_manager_cpu) == cpu;
+}
+
+bool shadowcore_cpu_hotplug_protected(unsigned int cpu)
+{
+	unsigned int other;
+	bool frozen = false;
+
+#ifdef CONFIG_FREEZER
+	frozen = pm_freezing;
+#endif
+
+	if (shadowcore_cpu_is_manager(cpu))
+		return true;
+	if (!sc_early_ready || frozen || !cpumask_test_cpu(cpu, &sc_user_cpus))
+		return false;
+	/* User threads have no legal fallback on the manager. Keep a user CPU
+	 * online unless the system freezer has quiesced those threads. */
+	for_each_cpu_and(other, &sc_user_cpus, cpu_online_mask)
+		if (other != cpu)
+			return false;
+	return true;
 }
 
 static int sc_cpu_index(struct sc_platform *sc, unsigned int cpu)
@@ -292,6 +378,26 @@ static ssize_t manager_cpu_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(manager_cpu);
 
+static ssize_t shadow_mode_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	struct sc_platform *sc = dev_get_drvdata(dev);
+
+	return sysfs_emit(buf, "enabled=%u owner_hwid=%u result=%u switches=%u\n",
+		readl(sc->regs + SC_SHADOW_CONTROL),
+		readl(sc->regs + SC_SHADOW_OWNER),
+		readl(sc->regs + SC_SHADOW_RESULT),
+		readl(sc->regs + SC_SHADOW_SWITCHES));
+}
+static DEVICE_ATTR_RO(shadow_mode);
+
+static ssize_t user_cpus_show(struct device *dev,
+			     struct device_attribute *attr, char *buf)
+{
+	return sysfs_emit(buf, "%*pbl\n", cpumask_pr_args(&sc_user_cpus));
+}
+static DEVICE_ATTR_RO(user_cpus);
+
 static ssize_t power_state_show(struct device *dev,
 			       struct device_attribute *attr, char *buf)
 {
@@ -316,7 +422,8 @@ static DEVICE_ATTR_RO(power_state);
 static struct attribute *sc_attrs[] = {
 	&dev_attr_abi_version.attr, &dev_attr_capabilities.attr,
 	&dev_attr_cpu_map.attr, &dev_attr_manager_cpu.attr,
-	&dev_attr_power_state.attr, NULL,
+	&dev_attr_power_state.attr, &dev_attr_shadow_mode.attr,
+	&dev_attr_user_cpus.attr, NULL,
 };
 static const struct attribute_group sc_group = { .attrs = sc_attrs };
 
@@ -429,6 +536,111 @@ static void sc_destroy_worker(void *data)
 	kthread_destroy_worker(data);
 }
 
+struct sc_takeover {
+	struct kthread_work work;
+	struct sc_platform *sc;
+	bool enable;
+	int result;
+};
+
+static void sc_takeover_work(struct kthread_work *work)
+{
+	struct sc_takeover *request = container_of(work, struct sc_takeover, work);
+	struct sc_platform *sc = request->sc;
+
+	if (WARN_ON_ONCE(raw_smp_processor_id() != sc->manager)) {
+		request->result = -EPERM;
+		return;
+	}
+	if (request->enable) {
+		/* The caller holds cpus_write_lock: no CPU teardown can race this
+		 * software ownership handoff. The EIO/PCH fabric remains always on. */
+		bitmap_copy(sc->saved_io_master, loongson_sysconf.cores_io_master, NR_CPUS);
+		clear_bit(0, loongson_sysconf.cores_io_master);
+		set_bit(sc->manager, loongson_sysconf.cores_io_master);
+	}
+	wmb();
+	writel(request->enable, sc->regs + SC_SHADOW_CONTROL);
+	if (readl(sc->regs + SC_SHADOW_RESULT) != SC_RESULT_OK ||
+	    readl(sc->regs + SC_SHADOW_CONTROL) != request->enable) {
+		if (request->enable)
+			bitmap_copy(loongson_sysconf.cores_io_master, sc->saved_io_master, NR_CPUS);
+		request->result = -EIO;
+		return;
+	}
+	smp_store_release(&sc_shadow_active, request->enable);
+	if (!request->enable)
+		bitmap_copy(loongson_sysconf.cores_io_master, sc->saved_io_master, NR_CPUS);
+	loongarch_eiointc_shadow_changed();
+	request->result = 0;
+}
+
+static int sc_takeover(struct sc_platform *sc, bool enable)
+{
+	struct sc_takeover request = { .sc = sc, .enable = enable, .result = -EIO };
+
+	cpus_write_lock();
+	if (!cpu_online(sc->manager) || !cpu_online(0)) {
+		cpus_write_unlock();
+		return -ENODEV;
+	}
+	kthread_init_work(&request.work, sc_takeover_work);
+	kthread_queue_work(sc->worker, &request.work);
+	kthread_flush_work(&request.work);
+	if (!request.result)
+		smp_store_release(&sc_live, enable ? sc : NULL);
+	cpus_write_unlock();
+	return request.result;
+}
+
+/* CPU0 originally has no online control because it was the boot IO master. */
+static ssize_t online_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	return sysfs_emit(buf, "%u\n", cpu_online(dev->id));
+}
+
+static ssize_t online_store(struct device *dev, struct device_attribute *attr,
+			    const char *buf, size_t count)
+{
+	bool online;
+	int ret = kstrtobool(buf, &online);
+
+	if (ret)
+		return ret;
+	ret = online ? add_cpu(dev->id) : remove_cpu(dev->id);
+	return ret ? ret : count;
+}
+static DEVICE_ATTR_RW(online);
+
+static int sc_boot_cpu_hotplug(struct sc_platform *sc, bool enable)
+{
+	struct device *dev = get_cpu_device(0);
+	int ret = 0;
+
+	if (!dev)
+		return -ENODEV;
+	lock_device_hotplug();
+	device_lock(dev);
+	container_of(dev, struct cpu, dev)->hotpluggable = enable;
+	dev_assign_offline_disabled(dev, !enable);
+	if (enable) {
+		ret = device_create_file(dev, &dev_attr_online);
+		if (!ret)
+			sc->boot_online_file = true;
+		else {
+			container_of(dev, struct cpu, dev)->hotpluggable = false;
+			dev_set_offline_disabled(dev);
+		}
+	}
+	device_unlock(dev);
+	unlock_device_hotplug();
+	if (!enable && sc->boot_online_file) {
+		device_remove_file(dev, &dev_attr_online);
+		sc->boot_online_file = false;
+	}
+	return ret;
+}
+
 static int sc_probe(struct platform_device *pdev)
 {
 	static const char * const names[SC_FIELDS] = {
@@ -500,6 +712,8 @@ static int sc_probe(struct platform_device *pdev)
 	    readl(regs + 0x1c) != SC_SLOT_STRIDE)
 		return dev_err_probe(dev, -EINVAL, "invalid management CPU mapping\n");
 	sc->manager = sc->cpu[i];
+	if (!sc_early_ready || sc->manager != sc_manager_cpu)
+		return dev_err_probe(dev, -EINVAL, "early management policy mismatch\n");
 	ret = sc_pin_manager(sc);
 	if (ret)
 		return dev_err_probe(dev, ret, "management CPU must be online\n");
@@ -514,6 +728,16 @@ static int sc_probe(struct platform_device *pdev)
 	ret = devm_device_add_group(dev, &sc_group);
 	if (ret)
 		return ret;
+	if (!io_master(0) || bitmap_weight(loongson_sysconf.cores_io_master, NR_CPUS) != 1)
+		return dev_err_probe(dev, -EINVAL, "unsupported initial IO-master layout\n");
+	ret = sc_takeover(sc, true);
+	if (ret)
+		return dev_err_probe(dev, ret, "management CPU Shadow takeover failed\n");
+	ret = sc_boot_cpu_hotplug(sc, true);
+	if (ret) {
+		sc_takeover(sc, false);
+		return ret;
+	}
 
 	/* All checks completed before publishing any scheduler input. */
 	cpus_read_lock();
@@ -524,7 +748,7 @@ static int sc_probe(struct platform_device *pdev)
 	installed = true;
 	atomic_set(&topology_changed, 1);
 	rebuild_sched_domains();
-	dev_info(dev, "ABI 1.0: %u CPUs; power manager bound to CPU%u (not hotpluggable)\n",
+	dev_info(dev, "ABI 1.0: %u CPUs; CPU%u owns IO master/Shadow/power; user tasks excluded\n",
 		 sc->count, sc->manager);
 	return 0;
 }
@@ -535,6 +759,13 @@ static void sc_remove(struct platform_device *pdev)
 	int i;
 
 	guard(mutex)(&sc_lock);
+	/* Restore boot service before allowing the fixed platform to unbind. */
+	for (i = 0; i < sc->count; i++)
+		if (!cpu_online(sc->cpu[i]) && add_cpu(sc->cpu[i]))
+			panic("Shadowcore: cannot restore CPU%d during removal", sc->cpu[i]);
+	sc_boot_cpu_hotplug(sc, false);
+	if (sc_takeover(sc, false))
+		panic("Shadowcore: cannot relinquish Shadow routing during removal");
 	cpus_write_lock();
 	smp_store_release(&sc_live, NULL);
 	for (i = 0; i < sc->count; i++)

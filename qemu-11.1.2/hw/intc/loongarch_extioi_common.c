@@ -136,6 +136,7 @@ static void loongarch_extioi_common_reset_hold(Object *obj, ResetType type)
     memset(s->sw_pending, 0, sizeof(s->sw_pending));
     memset(s->sw_ipmap, 0, sizeof(s->sw_ipmap));
     memset(s->sw_coremap, 0, sizeof(s->sw_coremap));
+    s->shadow_cpu = -1;
 
     for (i = 0; i < s->num_cpu; i++) {
         core = s->cpu + i;

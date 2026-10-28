@@ -21,6 +21,7 @@
 #include <asm/io.h>
 #include <asm/numa.h>
 #include <asm/loongson.h>
+#include <asm/shadowcore.h>
 
 int acpi_disabled;
 EXPORT_SYMBOL(acpi_disabled);
@@ -285,6 +286,7 @@ void __init acpi_boot_table_init(void)
 	 * Process the Multiple APIC Description Table (MADT), if present
 	 */
 	acpi_process_madt();
+	shadowcore_early_init();
 
 	/* Do not enable ACPI SPCR console by default */
 	acpi_parse_spcr(earlycon_acpi_spcr_enable, false);

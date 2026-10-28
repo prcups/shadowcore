@@ -94,6 +94,8 @@ static void eiointc_enable(void)
 #endif
 }
 
+#include <asm/shadowcore.h>
+
 static int cpu_to_eio_node(int cpu)
 {
 	if (!kvm_para_has_feature(KVM_FEATURE_VIRT_EXTIOI))
@@ -177,7 +179,10 @@ static int eiointc_set_irq_affinity(struct irq_data *d, const struct cpumask *af
 			     0x0, priv->node * CORES_PER_EIO_NODE);
 	}
 
-	irq_data_update_effective_affinity(d, cpumask_of(cpu));
+	/* Keep requested routes programmable; the hardware Shadow override only
+	 * changes the effective destination and can restore them when disabled. */
+	irq_data_update_effective_affinity(d, cpumask_of(
+		shadowcore_irq_target() >= 0 ? shadowcore_irq_target() : cpu));
 
 	raw_spin_unlock_irqrestore(&affinity_lock, flags);
 
@@ -438,8 +443,38 @@ static int eiointc_suspend(void *data)
 
 static void eiointc_resume(void *data)
 {
-	eiointc_router_init(0);
+	int cpu = shadowcore_irq_target();
+
+	eiointc_router_init(cpu >= 0 ? cpu : 0);
 }
+
+#ifdef CONFIG_LOONGARCH_SHADOWCORE
+void loongarch_eiointc_shadow_changed(void)
+{
+	struct irq_desc *desc;
+	struct irq_data *data;
+	unsigned long flags;
+	unsigned int irq;
+	int manager = shadowcore_irq_target();
+
+	if (manager < 0)
+		return;
+	/* Shadow changes effective hardware destinations, not requested affinity.
+	 * IRQs allocated later obtain their effective target in set_affinity(). */
+	irq_lock_sparse();
+	for_each_irq_desc(irq, desc) {
+		raw_spin_lock_irqsave(&desc->lock, flags);
+		for (data = &desc->irq_data; data; data = data->parent_data) {
+			if (irq_data_get_irq_chip(data) == &eiointc_irq_chip) {
+				irq_data_update_effective_affinity(data, cpumask_of(manager));
+				break;
+			}
+		}
+		raw_spin_unlock_irqrestore(&desc->lock, flags);
+	}
+	irq_unlock_sparse();
+}
+#endif
 
 static const struct syscore_ops eiointc_syscore_ops = {
 	.suspend = eiointc_suspend,

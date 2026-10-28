@@ -7,6 +7,7 @@
 #include "hw/core/cpu.h"
 #include "hw/core/sysbus.h"
 #include "hw/loongarch/shadowcore.h"
+#include "hw/intc/loongarch_extioi.h"
 #include "migration/vmstate.h"
 #include "system/reset.h"
 #include "target/loongarch/cpu.h"
@@ -29,6 +30,9 @@ struct ShadowcoreState {
     uint32_t records[SHADOWCORE_CPUS][SHADOWCORE_RECORD_SIZE / 4];
     ShadowcoreSlot slots[SHADOWCORE_CPUS];
     int manager;
+    LoongArchVirtMachineState *machine;
+    bool shadow_enabled;
+    uint32_t shadow_result, shadow_switches;
     uint64_t generation;
     uint32_t off_count, on_count;
 };
@@ -180,6 +184,10 @@ static uint64_t shadowcore_read(void *opaque, hwaddr addr, unsigned size)
     case 0x1c: return SHADOWCORE_SLOT_STRIDE;
     case 0x30: return s->off_count;
     case 0x38: return s->on_count;
+    case SHADOWCORE_SHADOW_CONTROL: return s->shadow_enabled;
+    case SHADOWCORE_SHADOW_OWNER: return s->records[s->manager][1];
+    case SHADOWCORE_SHADOW_RESULT: return s->shadow_result;
+    case SHADOWCORE_SHADOW_SWITCHES: return s->shadow_switches;
     }
     if (addr >= SHADOWCORE_RECORD_BASE &&
         addr < SHADOWCORE_RECORD_BASE + sizeof(s->records)) {
@@ -222,6 +230,24 @@ static void shadowcore_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
     unsigned index, reg;
 
     assert(bql_locked());
+    if (addr == SHADOWCORE_SHADOW_CONTROL) {
+        if (val > 1 || current_cpu != s->slots[s->manager].cpu ||
+            s->slots[s->manager].state != SHADOWCORE_STATE_ON) {
+            s->shadow_result = SHADOWCORE_RESULT_INVALID;
+            return;
+        }
+        if (!loongarch_extioi_set_shadow(s->machine->extioi,
+                                         s->records[s->manager][1], val)) {
+            s->shadow_result = SHADOWCORE_RESULT_INVALID;
+            return;
+        }
+        if (s->shadow_enabled != !!val) {
+            s->shadow_switches++;
+        }
+        s->shadow_enabled = val;
+        s->shadow_result = SHADOWCORE_RESULT_OK;
+        return;
+    }
     if (addr < SHADOWCORE_SLOT_BASE ||
         addr >= SHADOWCORE_SLOT_BASE + SHADOWCORE_SLOT_STRIDE * SHADOWCORE_CPUS) {
         goto invalid;
@@ -283,6 +309,9 @@ static void shadowcore_reset(void *opaque)
     unsigned i;
 
     s->generation++;
+    loongarch_extioi_set_shadow(s->machine->extioi, 0, false);
+    s->shadow_enabled = false;
+    s->shadow_result = s->shadow_switches = 0;
     s->off_count = s->on_count = 0;
     for (i = 0; i < SHADOWCORE_CPUS; i++) {
         ShadowcoreSlot *slot = &s->slots[i];
@@ -336,6 +365,7 @@ void virt_shadowcore_init(LoongArchVirtMachineState *lvms)
     int i;
 
     assert(cpus->len == SHADOWCORE_CPUS);
+    s->machine = lvms;
     s->manager = -1;
     for (i = 0; i < cpus->len; i++) {
         bool little = cpus->cpus[i].props.cluster_id !=

@@ -24,12 +24,17 @@ static inline bool virt_is_shadowcore(const LoongArchVirtMachineState *lvms)
 #define SHADOWCORE_ABI_VERSION     0x00010000
 #define SHADOWCORE_CAP_DISCOVERY   (1U << 0)
 #define SHADOWCORE_CAP_CPU_POWER   (1U << 1)
-#define SHADOWCORE_CAPABILITIES    (SHADOWCORE_CAP_DISCOVERY | SHADOWCORE_CAP_CPU_POWER)
+#define SHADOWCORE_CAP_SHADOW      (1U << 2)
+#define SHADOWCORE_CAPABILITIES    (SHADOWCORE_CAP_DISCOVERY | SHADOWCORE_CAP_CPU_POWER | SHADOWCORE_CAP_SHADOW)
 #define SHADOWCORE_MMIO_BASE       0x100f0000
 #define SHADOWCORE_MMIO_SIZE       0x1000
 #define SHADOWCORE_MAGIC           0x53484352
 #define SHADOWCORE_RECORD_BASE     0x100
 #define SHADOWCORE_RECORD_SIZE     0x20
+#define SHADOWCORE_SHADOW_CONTROL  0x40
+#define SHADOWCORE_SHADOW_OWNER    0x44
+#define SHADOWCORE_SHADOW_RESULT   0x48
+#define SHADOWCORE_SHADOW_SWITCHES 0x4c
 #define SHADOWCORE_REG_CPU_STATE   0x400
 #define SHADOWCORE_REG_CORE_STATE  0x480
 #define SHADOWCORE_SLOT_BASE       0x500
@@ -59,5 +64,7 @@ void virt_shadowcore_init(LoongArchVirtMachineState *lvms);
 void virt_shadowcore_dsdt(Aml *dsdt, LoongArchVirtMachineState *lvms);
 void virt_shadowcore_pptt(GArray *data, BIOSLinker *linker,
                          LoongArchVirtMachineState *lvms);
+void virt_shadowcore_control_table(GArray *data, BIOSLinker *linker,
+                                  LoongArchVirtMachineState *lvms);
 
 #endif

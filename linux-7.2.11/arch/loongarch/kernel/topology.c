@@ -14,7 +14,7 @@
 #ifdef CONFIG_HOTPLUG_CPU
 bool arch_cpu_hotplug_protected(unsigned int cpu)
 {
-	return shadowcore_cpu_is_manager(cpu);
+	return shadowcore_cpu_hotplug_protected(cpu);
 }
 
 bool arch_cpu_is_hotpluggable(int cpu)
