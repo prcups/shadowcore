@@ -8,6 +8,7 @@
 #include "qemu/osdep.h"
 #include "qemu/error-report.h"
 #include "hw/core/boards.h"
+#include "hw/core/irq.h"
 #include "qapi/error.h"
 #include "hw/intc/loongarch_ipi.h"
 #include "hw/core/qdev-properties.h"
@@ -64,6 +65,16 @@ static IPICore *loongarch_ipi_get_cpu(LoongsonIPICommonState *lics,
     }
 
     return NULL;
+}
+
+void loongarch_ipi_reset_cpu(DeviceState *dev, CPUState *cpu)
+{
+    IPICore *core = loongarch_ipi_get_cpu(LOONGSON_IPI_COMMON(dev), DEVICE(cpu));
+
+    assert(core);
+    core->status = core->en = core->set = core->clear = 0;
+    memset(core->buf, 0, sizeof(core->buf));
+    qemu_set_irq(core->irq, 0);
 }
 
 static void loongarch_ipi_realize(DeviceState *dev, Error **errp)

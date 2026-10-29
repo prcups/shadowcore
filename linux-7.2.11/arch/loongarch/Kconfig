@@ -833,3 +833,8 @@ config LOONGARCH_SHADOWCORE
 	  CPU_OFF/CPU_ON MMIO interface. Power management runs on the always-online
 	  little CPU; CPUs power themselves off after hotplug teardown. Other
 	  machines retain their native CPU startup/offline path and capacity.
+	  With SUSPEND and SUSPEND_FREEZER enabled, S3 suspend runs on the boot
+	  management CPU0 and powers off other CPUs through ordinary PM hotplug.
+	  The manager stays online;
+	  previously online CPUs restart through the reset window without their
+	  old contexts. QEMU system_wakeup or a power button resumes the platform.

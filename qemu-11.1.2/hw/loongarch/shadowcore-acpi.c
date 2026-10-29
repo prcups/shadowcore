@@ -121,6 +121,8 @@ void virt_shadowcore_dsdt(Aml *dsdt, LoongArchVirtMachineState *lvms)
     aml_append(dev, aml_name_decl("_STA", aml_int(0x0f)));
     aml_append(crs, aml_memory32_fixed(SHADOWCORE_MMIO_BASE,
                                       SHADOWCORE_MMIO_SIZE, AML_READ_WRITE));
+    aml_append(crs, aml_memory32_fixed(SHADOWCORE_BOOT_VECTOR,
+                                      SHADOWCORE_BOOT_WINDOW_SIZE, AML_READ_WRITE));
     aml_append(dev, aml_name_decl("_CRS", crs));
     for (i = 0; i < cpus->len; i++) {
         bool little = cpus->cpus[i].props.cluster_id == SHADOWCORE_LITTLE_CLUSTER;

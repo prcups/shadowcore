@@ -418,7 +418,8 @@ int loongson_boot_secondary(int cpu, struct task_struct *idle)
 	cpuboot_data.offset = per_cpu_offset(cpu);
 	smp_wmb();
 
-	/* A genuinely powered-off CPU starts directly at smpboot_entry. */
+	/* A powered-off CPU resets at 0x1c000000. The sealed Linux jump stub
+	 * there reads the staged entry and branches to smpboot_entry. */
 	ret = shadowcore_cpu_on(cpu, entry);
 	if (!ret)
 		return 0;

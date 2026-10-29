@@ -1,48 +1,116 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* ABI 1.0: per-thread slots, self-off and manager-only CPU_ON. */
+/* ABI 1.0: compact CPU slots, shared secondary entry and reset trampoline. */
 #include "qemu/osdep.h"
 #include "qapi/error.h"
 #include "qemu/log.h"
 #include "qemu/main-loop.h"
 #include "hw/core/cpu.h"
+#include "hw/core/hw-error.h"
 #include "hw/core/sysbus.h"
 #include "hw/loongarch/shadowcore.h"
 #include "hw/intc/loongarch_extioi.h"
+#include "hw/intc/loongarch_ipi.h"
+#include "system/address-spaces.h"
+#include "qemu/bswap.h"
 #include "migration/vmstate.h"
 #include "system/reset.h"
 #include "target/loongarch/cpu.h"
 #include "exec/cputlb.h"
 
 #define TYPE_SHADOWCORE "loongarch-shadowcore"
+#define SHADOWCORE_CPU_FIELDS 7
 OBJECT_DECLARE_SIMPLE_TYPE(ShadowcoreState, SHADOWCORE)
 
 typedef struct ShadowcoreSlot {
     CPUState *cpu;
     CPUSysState reset_sys;
-    uint64_t entry;
+    uint64_t accepted_entry;
     uint32_t state, result, sequence, accepted, completed;
-    uint32_t off_count, on_count;
 } ShadowcoreSlot;
 
 struct ShadowcoreState {
     SysBusDevice parent_obj;
     MemoryRegion mmio;
-    uint32_t records[SHADOWCORE_CPUS][SHADOWCORE_RECORD_SIZE / 4];
+    MemoryRegion boot_window;
+    uint32_t boot_control, boot_result, boot_generation;
+    uint64_t boot_entry;
+    uint32_t records[SHADOWCORE_CPUS][SHADOWCORE_CPU_FIELDS];
     ShadowcoreSlot slots[SHADOWCORE_CPUS];
     int manager;
     LoongArchVirtMachineState *machine;
     bool shadow_enabled;
-    uint32_t shadow_result, shadow_switches;
+    uint32_t shadow_result;
     uint64_t generation;
-    uint32_t off_count, on_count;
 };
 
 typedef struct ShadowcoreWork {
     ShadowcoreState *controller;
-    uint64_t generation, entry;
+    uint64_t generation;
     unsigned index;
     uint32_t command, sequence;
 } ShadowcoreWork;
+
+static void shadowcore_boot_control(ShadowcoreState *s, uint32_t val)
+{
+    unsigned i;
+
+    if (current_cpu != s->slots[s->manager].cpu ||
+        s->slots[s->manager].state != SHADOWCORE_STATE_ON ||
+        (val != 0 && val != SHADOWCORE_BOOT_ENABLE &&
+         val != SHADOWCORE_BOOT_READY)) {
+        s->boot_result = SHADOWCORE_RESULT_INVALID;
+        return;
+    }
+    if (val == s->boot_control) {
+        s->boot_result = SHADOWCORE_RESULT_OK;
+        return;
+    }
+    /* Seal once per machine-reset epoch. No live code replacement. */
+    if (s->boot_control == SHADOWCORE_BOOT_READY ||
+        (val == SHADOWCORE_BOOT_READY &&
+         s->boot_control != SHADOWCORE_BOOT_ENABLE)) {
+        s->boot_result = SHADOWCORE_RESULT_INVALID;
+        return;
+    }
+    for (i = 0; i < SHADOWCORE_CPUS; i++) {
+        if (s->slots[i].state != SHADOWCORE_STATE_ON) {
+            s->boot_result = SHADOWCORE_RESULT_BUSY;
+            return;
+        }
+    }
+    if (val == SHADOWCORE_BOOT_READY) {
+        memory_region_flush_rom_device(&s->boot_window, 0,
+                                       SHADOWCORE_BOOT_WINDOW_SIZE);
+        s->boot_generation++;
+    }
+    s->boot_control = val;
+    memory_region_set_enabled(&s->boot_window, val != 0);
+    s->boot_result = SHADOWCORE_RESULT_OK;
+}
+
+static void shadowcore_boot_write(void *opaque, hwaddr addr,
+                                 uint64_t val, unsigned size)
+{
+    ShadowcoreState *s = opaque;
+    uint8_t *ram = memory_region_get_ram_ptr(&s->boot_window);
+
+    assert(bql_locked());
+    if (current_cpu != s->slots[s->manager].cpu ||
+        s->boot_control != SHADOWCORE_BOOT_ENABLE) {
+        s->boot_result = SHADOWCORE_RESULT_INVALID;
+        return;
+    }
+    stn_le_p(ram + addr, size, val);
+    memory_region_flush_rom_device(&s->boot_window, addr, size);
+    s->boot_result = SHADOWCORE_RESULT_OK;
+}
+
+static const MemoryRegionOps shadowcore_boot_ops = {
+    .write = shadowcore_boot_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid = { .min_access_size = 1, .max_access_size = 8, .unaligned = false },
+    .impl = { .min_access_size = 1, .max_access_size = 8 },
+};
 
 static void shadowcore_power_work(CPUState *cs, run_on_cpu_data data)
 {
@@ -63,8 +131,6 @@ static void shadowcore_power_work(CPUState *cs, run_on_cpu_data data)
         qatomic_set(&cpu->shadowcore_powered_off, true);
         cs->halted = 1;
         cs->exception_index = EXCP_HLT;
-        slot->off_count++;
-        s->off_count++;
         slot->state = SHADOWCORE_STATE_OFF;
     } else {
         /* Discard context; model capabilities and IOCSR wiring survive. */
@@ -79,12 +145,13 @@ static void shadowcore_power_work(CPUState *cs, run_on_cpu_data data)
 #endif
         cpu_reset(cs);
         tlb_flush(cs);
+        loongarch_ipi_reset_cpu(s->machine->ipi, cs);
         cpu_reset_interrupt(cs, CPU_INTERRUPT_HARD);
-        cpu_set_pc(cs, work->entry);
+        assert(CPU_GET_CLASS(cs)->get_pc(cs) == SHADOWCORE_BOOT_VECTOR);
         cs->halted = 0;
-        slot->on_count++;
-        s->on_count++;
-        slot->state = SHADOWCORE_STATE_ON;
+        /* Remain STARTING until actual guest instructions in the reset
+         * window report BOOT_ENTER. Reset is not Linux-online completion. */
+        return;
     }
     slot->result = SHADOWCORE_RESULT_OK;
     slot->completed = work->sequence;
@@ -126,13 +193,17 @@ static void shadowcore_command(ShadowcoreState *s, unsigned index, uint32_t cmd)
         slot->result = SHADOWCORE_RESULT_ALREADY;
         return;
     }
+    if (s->boot_control != SHADOWCORE_BOOT_READY) {
+        slot->result = SHADOWCORE_RESULT_INVALID;
+        return;
+    }
     pa_bits = FIELD_EX32(LOONGARCH_CPU(slot->cpu)->env.cpucfg[1],
                          CPUCFG1, PALEN) + 1;
     if ((cmd == SHADOWCORE_CMD_CPU_OFF &&
          slot->state != SHADOWCORE_STATE_ON) ||
         (cmd == SHADOWCORE_CMD_CPU_ON &&
-         (!slot->entry || (slot->entry & 3) ||
-          (pa_bits < 64 && (slot->entry >> pa_bits))))) {
+         (!s->boot_entry || (s->boot_entry & 3) ||
+          (pa_bits < 64 && (s->boot_entry >> pa_bits))))) {
         slot->result = SHADOWCORE_RESULT_INVALID;
         return;
     }
@@ -142,28 +213,16 @@ static void shadowcore_command(ShadowcoreState *s, unsigned index, uint32_t cmd)
     work->generation = s->generation;
     work->index = index;
     work->command = cmd;
-    work->entry = slot->entry;
     work->sequence = slot->sequence;
+    if (cmd == SHADOWCORE_CMD_CPU_ON) {
+        slot->accepted_entry = s->boot_entry;
+    }
     slot->accepted = slot->sequence;
     slot->result = SHADOWCORE_RESULT_OK;
     slot->state = cmd == SHADOWCORE_CMD_CPU_OFF ?
                   SHADOWCORE_STATE_STOPPING : SHADOWCORE_STATE_STARTING;
     /* Match ARM PSCI: stop/start outside translated guest execution. */
     async_run_on_cpu(slot->cpu, shadowcore_power_work, RUN_ON_CPU_HOST_PTR(work));
-}
-
-static uint32_t shadowcore_domain_state(ShadowcoreState *s, unsigned index)
-{
-    unsigned i;
-
-    for (i = 0; i < SHADOWCORE_CPUS; i++) {
-        if (s->records[index][2] == s->records[i][2] &&
-            s->records[index][5] == s->records[i][5] &&
-            s->slots[i].state != SHADOWCORE_STATE_OFF) {
-            return 1;
-        }
-    }
-    return 0;
 }
 
 static uint64_t shadowcore_read(void *opaque, hwaddr addr, unsigned size)
@@ -178,30 +237,19 @@ static uint64_t shadowcore_read(void *opaque, hwaddr addr, unsigned size)
     case 0x04: return SHADOWCORE_ABI_VERSION;
     case 0x08: return SHADOWCORE_CAPABILITIES;
     case 0x0c: return SHADOWCORE_CPUS;
-    case 0x10: return SHADOWCORE_RECORD_BASE;
-    case 0x14: return SHADOWCORE_RECORD_SIZE;
-    case 0x18: return s->records[s->manager][1];
-    case 0x1c: return SHADOWCORE_SLOT_STRIDE;
-    case 0x30: return s->off_count;
-    case 0x38: return s->on_count;
+    case 0x10: return SHADOWCORE_SLOT_BASE;
+    case 0x14: return SHADOWCORE_SLOT_STRIDE;
+    case SHADOWCORE_MANAGER_HARDWARE_ID:
+        return s->records[s->manager][1];
+    case SHADOWCORE_MANAGER_SLOT: return s->manager;
+    case SHADOWCORE_BOOT_ENTRY_LO: return (uint32_t)s->boot_entry;
+    case SHADOWCORE_BOOT_ENTRY_HI: return s->boot_entry >> 32;
     case SHADOWCORE_SHADOW_CONTROL: return s->shadow_enabled;
-    case SHADOWCORE_SHADOW_OWNER: return s->records[s->manager][1];
     case SHADOWCORE_SHADOW_RESULT: return s->shadow_result;
-    case SHADOWCORE_SHADOW_SWITCHES: return s->shadow_switches;
-    }
-    if (addr >= SHADOWCORE_RECORD_BASE &&
-        addr < SHADOWCORE_RECORD_BASE + sizeof(s->records)) {
-        addr -= SHADOWCORE_RECORD_BASE;
-        return s->records[addr / SHADOWCORE_RECORD_SIZE]
-                         [(addr % SHADOWCORE_RECORD_SIZE) / 4];
-    }
-    if (addr >= SHADOWCORE_REG_CPU_STATE &&
-        addr < SHADOWCORE_REG_CPU_STATE + SHADOWCORE_CPUS * 4) {
-        return s->slots[(addr - SHADOWCORE_REG_CPU_STATE) / 4].state;
-    }
-    if (addr >= SHADOWCORE_REG_CORE_STATE &&
-        addr < SHADOWCORE_REG_CORE_STATE + SHADOWCORE_CPUS * 4) {
-        return shadowcore_domain_state(s, (addr - SHADOWCORE_REG_CORE_STATE) / 4);
+    case SHADOWCORE_BOOT_CONTROL: return s->boot_control;
+    case SHADOWCORE_BOOT_RESULT: return s->boot_result;
+    case SHADOWCORE_BOOT_SIZE: return SHADOWCORE_BOOT_WINDOW_SIZE;
+    case SHADOWCORE_BOOT_GENERATION: return s->boot_generation;
     }
     if (addr < SHADOWCORE_SLOT_BASE ||
         addr >= SHADOWCORE_SLOT_BASE + SHADOWCORE_SLOT_STRIDE * SHADOWCORE_CPUS) {
@@ -213,12 +261,9 @@ static uint64_t shadowcore_read(void *opaque, hwaddr addr, unsigned size)
     switch (reg) {
     case SHADOWCORE_SLOT_STATE: return slot->state;
     case SHADOWCORE_SLOT_RESULT: return slot->result;
-    case SHADOWCORE_SLOT_ENTRY_LO: return (uint32_t)slot->entry;
-    case SHADOWCORE_SLOT_ENTRY_HI: return slot->entry >> 32;
+    case SHADOWCORE_SLOT_HARDWARE_ID: return s->records[index][1];
     case SHADOWCORE_SLOT_SEQUENCE: return slot->sequence;
     case SHADOWCORE_SLOT_COMPLETED: return slot->completed;
-    case SHADOWCORE_SLOT_OFF_COUNT: return slot->off_count;
-    case SHADOWCORE_SLOT_ON_COUNT: return slot->on_count;
     default: return 0;
     }
 }
@@ -230,6 +275,33 @@ static void shadowcore_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
     unsigned index, reg;
 
     assert(bql_locked());
+    if (addr == SHADOWCORE_BOOT_ENTRY_LO ||
+        addr == SHADOWCORE_BOOT_ENTRY_HI) {
+        unsigned i;
+
+        if (current_cpu != s->slots[s->manager].cpu) {
+            goto invalid;
+        }
+        for (i = 0; i < SHADOWCORE_CPUS; i++) {
+            if (shadowcore_slot_pending(&s->slots[i])) {
+                goto invalid;
+            }
+        }
+        if (addr == SHADOWCORE_BOOT_ENTRY_LO) {
+            s->boot_entry = deposit64(s->boot_entry, 0, 32, val);
+        } else {
+            s->boot_entry = deposit64(s->boot_entry, 32, 32, val);
+        }
+        return;
+    }
+    if (addr == SHADOWCORE_BOOT_CONTROL) {
+        shadowcore_boot_control(s, val);
+        return;
+    }
+    if (addr >= SHADOWCORE_BOOT_RESULT && addr <= SHADOWCORE_BOOT_GENERATION) {
+        s->boot_result = SHADOWCORE_RESULT_INVALID;
+        return;
+    }
     if (addr == SHADOWCORE_SHADOW_CONTROL) {
         if (val > 1 || current_cpu != s->slots[s->manager].cpu ||
             s->slots[s->manager].state != SHADOWCORE_STATE_ON) {
@@ -240,9 +312,6 @@ static void shadowcore_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
                                          s->records[s->manager][1], val)) {
             s->shadow_result = SHADOWCORE_RESULT_INVALID;
             return;
-        }
-        if (s->shadow_enabled != !!val) {
-            s->shadow_switches++;
         }
         s->shadow_enabled = val;
         s->shadow_result = SHADOWCORE_RESULT_OK;
@@ -255,6 +324,23 @@ static void shadowcore_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
     index = (addr - SHADOWCORE_SLOT_BASE) / SHADOWCORE_SLOT_STRIDE;
     reg = (addr - SHADOWCORE_SLOT_BASE) % SHADOWCORE_SLOT_STRIDE;
     slot = &s->slots[index];
+    if (reg == SHADOWCORE_SLOT_BOOT_ENTER) {
+        uint64_t pc = current_cpu ? CPU_GET_CLASS(current_cpu)->get_pc(current_cpu) : 0;
+
+        if (s->records[index][3] || current_cpu != slot->cpu || val != 1 ||
+            slot->state != SHADOWCORE_STATE_STARTING ||
+            s->boot_control != SHADOWCORE_BOOT_READY ||
+            slot->accepted_entry != s->boot_entry ||
+            pc < SHADOWCORE_BOOT_VECTOR ||
+            pc >= SHADOWCORE_BOOT_VECTOR + SHADOWCORE_BOOT_WINDOW_SIZE) {
+            slot->result = SHADOWCORE_RESULT_INVALID;
+            return;
+        }
+        slot->completed = slot->accepted;
+        slot->result = SHADOWCORE_RESULT_OK;
+        slot->state = SHADOWCORE_STATE_ON;
+        return;
+    }
     if (s->records[index][3] ||
         (current_cpu != slot->cpu &&
          current_cpu != s->slots[s->manager].cpu)) {
@@ -269,18 +355,6 @@ static void shadowcore_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
         goto invalid;
     }
     switch (reg) {
-    case SHADOWCORE_SLOT_ENTRY_LO:
-        if (current_cpu != s->slots[s->manager].cpu) {
-            goto invalid;
-        }
-        slot->entry = deposit64(slot->entry, 0, 32, val);
-        return;
-    case SHADOWCORE_SLOT_ENTRY_HI:
-        if (current_cpu != s->slots[s->manager].cpu) {
-            goto invalid;
-        }
-        slot->entry = deposit64(slot->entry, 32, 32, val);
-        return;
     case SHADOWCORE_SLOT_SEQUENCE:
         slot->sequence = val;
         return;
@@ -309,18 +383,23 @@ static void shadowcore_reset(void *opaque)
     unsigned i;
 
     s->generation++;
+    memory_region_set_enabled(&s->boot_window, false);
+    memset(memory_region_get_ram_ptr(&s->boot_window), 0,
+           SHADOWCORE_BOOT_WINDOW_SIZE);
+    memory_region_flush_rom_device(&s->boot_window, 0,
+                                   SHADOWCORE_BOOT_WINDOW_SIZE);
+    s->boot_control = s->boot_result = s->boot_generation = 0;
+    s->boot_entry = 0;
     loongarch_extioi_set_shadow(s->machine->extioi, 0, false);
     s->shadow_enabled = false;
-    s->shadow_result = s->shadow_switches = 0;
-    s->off_count = s->on_count = 0;
+    s->shadow_result = 0;
     for (i = 0; i < SHADOWCORE_CPUS; i++) {
         ShadowcoreSlot *slot = &s->slots[i];
 
-        slot->entry = 0;
+        slot->accepted_entry = 0;
         slot->state = SHADOWCORE_STATE_ON;
         slot->result = SHADOWCORE_RESULT_OK;
         slot->sequence = slot->accepted = slot->completed = 0;
-        slot->off_count = slot->on_count = 0;
         qatomic_set(&LOONGARCH_CPU(slot->cpu)->shadowcore_powered_off, false);
     }
 }
@@ -332,13 +411,17 @@ static void shadowcore_instance_init(Object *obj)
     memory_region_init_io(&s->mmio, obj, &shadowcore_ops, s,
                           TYPE_SHADOWCORE, SHADOWCORE_MMIO_SIZE);
     sysbus_init_mmio(SYS_BUS_DEVICE(obj), &s->mmio);
+    memory_region_init_rom_device(&s->boot_window, obj, &shadowcore_boot_ops, s,
+                                  "shadowcore-boot-sram",
+                                  SHADOWCORE_BOOT_WINDOW_SIZE, &error_fatal);
+    memory_region_set_enabled(&s->boot_window, false);
 }
 
 static void shadowcore_class_init(ObjectClass *oc, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(oc);
 
-    dc->desc = "Shadowcore self-off and manager CPU_ON controller";
+    dc->desc = "Shadowcore CPU power, Shadow routing and reset trampoline";
     dc->vmsd = &shadowcore_vmstate;
     dc->user_creatable = false;
 }
@@ -388,6 +471,8 @@ void virt_shadowcore_init(LoongArchVirtMachineState *lvms)
     assert(s->manager >= 0);
     sysbus_realize_and_unref(SYS_BUS_DEVICE(s), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(s), 0, SHADOWCORE_MMIO_BASE);
+    memory_region_add_subregion_overlap(get_system_memory(), SHADOWCORE_BOOT_VECTOR,
+                                        &s->boot_window, 1);
     shadowcore_reset(s);
     qemu_register_reset(shadowcore_reset, s);
 }

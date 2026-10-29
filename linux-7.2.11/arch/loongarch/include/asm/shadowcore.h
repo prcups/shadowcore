@@ -9,6 +9,12 @@
 struct task_struct;
 struct cpumask;
 
+#if defined(CONFIG_LOONGARCH_SHADOWCORE) && defined(CONFIG_SUSPEND)
+int shadowcore_suspend_enter(void);
+#else
+static inline int shadowcore_suspend_enter(void) { return -ENODEV; }
+#endif
+
 #ifdef CONFIG_LOONGARCH_SHADOWCORE
 void __init shadowcore_early_init(void);
 void __init shadowcore_smp_init(void);

@@ -28,5 +28,7 @@ struct LoongarchIPIClass {
 void kvm_ipi_realize(DeviceState *dev, Error **errp);
 int kvm_ipi_get(void *opaque);
 int kvm_ipi_put(void *opaque, int version_id);
+/* Reset only the target CPU's local IPI/mailbox bank, not the whole fabric. */
+void loongarch_ipi_reset_cpu(DeviceState *dev, CPUState *cpu);
 
 #endif

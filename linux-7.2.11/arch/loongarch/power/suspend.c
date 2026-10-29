@@ -12,6 +12,7 @@
 #include <asm/loongarch.h>
 #include <asm/loongson.h>
 #include <asm/setup.h>
+#include <asm/shadowcore.h>
 #include <asm/time.h>
 #include <asm/tlbflush.h>
 
@@ -61,6 +62,11 @@ void loongarch_common_resume(void)
 
 int loongarch_acpi_suspend(void)
 {
+	int ret = shadowcore_suspend_enter();
+
+	if (ret != -ENODEV)
+		return ret;
+
 	enable_gpe_wakeup();
 	enable_pci_wakeup();
 

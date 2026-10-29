@@ -147,6 +147,10 @@ extern suspend_state_t pm_suspend_target_state;
 extern suspend_state_t mem_sleep_current;
 extern suspend_state_t mem_sleep_default;
 
+/* Dispatch must finish the complete suspend transaction before returning. */
+int arch_suspend_dispatch(suspend_state_t state,
+			  int (*enter)(suspend_state_t state));
+
 /**
  * suspend_set_ops - set platform dependent suspend operations
  * @ops: The new suspend operations to set.

@@ -565,6 +565,12 @@ static void suspend_finish(void)
 	pm_restore_console();
 }
 
+int __weak arch_suspend_dispatch(suspend_state_t state,
+				 int (*enter)(suspend_state_t state))
+{
+	return enter(state);
+}
+
 /**
  * enter_state - Do common work needed to enter system sleep state.
  * @state: System sleep state to enter.
@@ -641,7 +647,7 @@ int pm_suspend(suspend_state_t state)
 		return -EINVAL;
 
 	pr_info("suspend entry (%s)\n", mem_sleep_labels[state]);
-	error = enter_state(state);
+	error = arch_suspend_dispatch(state, enter_state);
 	dpm_save_errno(error);
 	pr_info("suspend exit\n");
 	return error;

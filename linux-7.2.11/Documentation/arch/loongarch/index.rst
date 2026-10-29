@@ -11,6 +11,6 @@ LoongArch Architecture
    introduction
    booting
    irq-chip-model
-   shadowcore-power
+   shadowcore-s3
 
    features
