@@ -19,7 +19,8 @@ static const CPUArchIdList *shadowcore_possible_cpu_arch_ids(MachineState *ms)
     ms->possible_cpus->len = SHADOWCORE_CPUS;
     for (i = 0; i < SHADOWCORE_CPUS; i++) {
         CPUArchId *slot = &ms->possible_cpus->cpus[i];
-        bool little = i == SHADOWCORE_BIG_THREADS;
+        bool little = i == SHADOWCORE_MANAGER_SLOT_ID;
+        int big_thread = i - SHADOWCORE_FIRST_BIG_SLOT;
 
         slot->type = ms->cpu_type;
         slot->arch_id = i;
@@ -27,11 +28,11 @@ static const CPUArchIdList *shadowcore_possible_cpu_arch_ids(MachineState *ms)
         slot->props.has_socket_id = true;
         slot->props.socket_id = 0;
         slot->props.has_cluster_id = true;
-        slot->props.cluster_id = little ? 1 : 0;
+        slot->props.cluster_id = little ? SHADOWCORE_LITTLE_CLUSTER : 0;
         slot->props.has_core_id = true;
-        slot->props.core_id = little ? SHADOWCORE_BIG_CORES : i / 2;
+        slot->props.core_id = little ? SHADOWCORE_BIG_CORES : big_thread / 2;
         slot->props.has_thread_id = true;
-        slot->props.thread_id = little ? 0 : i % 2;
+        slot->props.thread_id = little ? 0 : big_thread % 2;
     }
     return ms->possible_cpus;
 }
@@ -79,6 +80,7 @@ static void shadowcore_test_init(MachineState *ms)
                      "to install ACPI tables; firmware-less boot is unsupported");
         exit(EXIT_FAILURE);
     }
+    shadowcore_s3_init(SHADOWCORE_TEST_MACHINE(ms));
 }
 
 static void shadowcore_get_capacity(Object *obj, Visitor *v, const char *name,
@@ -110,6 +112,11 @@ static void shadowcore_test_instance_init(Object *obj)
     MACHINE(obj)->smp.cores = SHADOWCORE_CPUS;
 }
 
+static void shadowcore_test_instance_finalize(Object *obj)
+{
+    shadowcore_s3_cleanup(SHADOWCORE_TEST_MACHINE(obj));
+}
+
 static void shadowcore_test_class_init(ObjectClass *oc, const void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
@@ -135,6 +142,7 @@ static const TypeInfo shadowcore_test_machine_type = {
     .parent = TYPE_LOONGARCH_VIRT_MACHINE,
     .instance_size = sizeof(ShadowcoreTestMachineState),
     .instance_init = shadowcore_test_instance_init,
+    .instance_finalize = shadowcore_test_instance_finalize,
     .class_init = shadowcore_test_class_init,
 };
 

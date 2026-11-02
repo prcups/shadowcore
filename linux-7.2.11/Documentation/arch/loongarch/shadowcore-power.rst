@@ -3,16 +3,14 @@ Shadowcore CPU power protocol (ABI 1.0)
 
 This is a software-visible TCG power model. Linux CPU hotplug quiesces a
 CPU before it powers itself off. A dedicated kthread worker, bound to the CPU
-identified by the little/manager role (CPU16 in the default enumeration),
+identified by the little/manager role (CPU0 in the default enumeration),
 performs CPU_ON and checks OFF completion. The manager remains online, has no
 per-CPU sysfs online control, and is rejected by both the architecture
-CPU-disable hook and the device CPU_OFF command. CPU0 performs early boot.
-Once the management worker is ready, software IO-master ownership is handed
-from CPU0 to the manager, then the manager enables the MMIO Shadow switch.
-The always-on EIO/PCH fabric remains instantiated; this does not relocate the
-ACPI EIO controller node or rebuild IRQ domains. CPU0's online control is
-published after successful handoff. At least one user-capable CPU is retained
-outside system freezing, because user tasks cannot fall back to the manager.
+CPU-disable hook and the device CPU_OFF command. The manager is also the
+boot IO master. Its bound worker enables Shadow routing without transferring
+software IO-master ownership or publishing a CPU0 offline control.
+At least one user-capable CPU is retained outside system freezing, because
+user tasks cannot fall back to the manager.
 The generic hotplug core also rejects management-CPU teardown before parking
 threads; its hotplug/target and hotplug/fail controls are hidden. The driver
 removes controls already created before platform discovery, and subsequent
@@ -97,8 +95,8 @@ The CPU power implementation is source-reviewed only, without compilation or run
 tests at the user's request. Acceptance still requires repeated hotplug,
 manager offline rejection, concurrent requests, IRQ/IPI while OFF, SMT states,
 reset with queued work and plain virt regression checks with bounded timeouts.
-CPU0 hotplug is enabled after handoff but is not runtime-verified by this
-change. An all-big-cores-off system-sleep policy is not implemented.
+The boot manager cannot be offlined. Linux coordination of all-big-cores-off
+system sleep requires the matching S3 lifecycle implementation.
 Missing hardware acknowledgements or a managed CPU's startup timeout stop the
 kernel explicitly; recoverable cancellation of a late CPU_ON is not implemented.
 The driver's read-only manager_cpu and power_state attributes expose the
@@ -131,7 +129,7 @@ unacknowledged vectors are moved on enable/disable; masked input status remains
 pending until unmask. Acknowledged vectors are not recreated from input levels.
 Linux effective_affinity records the Shadow target, while requested affinity
 can still differ. The mode is activated by the bound kernel worker only after
-the manager is online and software IO-master ownership has been transferred.
+the boot manager is online and already owns the IO fabric.
 The driver exposes read-only shadow_mode and user_cpus for inspection.
 
 A revision-1 SHCT ACPI table is consumed after MADT parsing and before user-task
@@ -145,4 +143,4 @@ This policy persists for the boot epoch and does not implement ISA emulation.
 These Shadow and scheduling changes are source-reviewed only. Compilation and
 runtime verification are deferred at the user's request. Needed checks include
 pending IRQ movement, masks and acknowledgement, normal-mode route restoration,
-reset, CPU0 hotplug, user affinity/fork/cpuset exclusion, and plain virt boot.
+reset, manager offline rejection, user task exclusion, and plain virt boot.

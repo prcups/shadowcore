@@ -4,6 +4,7 @@
 
 #include "hw/loongarch/virt.h"
 #include "hw/acpi/aml-build.h"
+#include "qemu/notify.h"
 
 #define TYPE_SHADOWCORE_TEST_MACHINE MACHINE_TYPE_NAME("shadowcore-test")
 OBJECT_DECLARE_SIMPLE_TYPE(ShadowcoreTestMachineState, SHADOWCORE_TEST_MACHINE)
@@ -11,6 +12,11 @@ OBJECT_DECLARE_SIMPLE_TYPE(ShadowcoreTestMachineState, SHADOWCORE_TEST_MACHINE)
 struct ShadowcoreTestMachineState {
     LoongArchVirtMachineState parent_obj;
     uint32_t little_capacity;
+    MemoryRegion sleep_regs;
+    Notifier wakeup;
+    bool s3_initialized;
+    bool sleeping;
+    uint8_t sleep_status;
 };
 
 static inline bool virt_is_shadowcore(const LoongArchVirtMachineState *lvms)
@@ -21,6 +27,10 @@ static inline bool virt_is_shadowcore(const LoongArchVirtMachineState *lvms)
 #define SHADOWCORE_BIG_CORES       8
 #define SHADOWCORE_BIG_THREADS     (SHADOWCORE_BIG_CORES * 2)
 #define SHADOWCORE_CPUS            (SHADOWCORE_BIG_THREADS + 1)
+#define SHADOWCORE_MANAGER_SLOT_ID 0
+#define SHADOWCORE_FIRST_BIG_SLOT  1
+#define SHADOWCORE_LITTLE_CLUSTER  1
+#define SHADOWCORE_SLP_TYP_S3      3
 #define SHADOWCORE_ABI_VERSION     0x00010000
 #define SHADOWCORE_CAP_DISCOVERY   (1U << 0)
 #define SHADOWCORE_CAP_CPU_POWER   (1U << 1)
@@ -61,6 +71,8 @@ static inline bool virt_is_shadowcore(const LoongArchVirtMachineState *lvms)
 #define SHADOWCORE_STATE_STOPPING 3
 
 void virt_shadowcore_init(LoongArchVirtMachineState *lvms);
+void shadowcore_s3_init(ShadowcoreTestMachineState *s);
+void shadowcore_s3_cleanup(ShadowcoreTestMachineState *s);
 void virt_shadowcore_dsdt(Aml *dsdt, LoongArchVirtMachineState *lvms);
 void virt_shadowcore_pptt(GArray *data, BIOSLinker *linker,
                          LoongArchVirtMachineState *lvms);

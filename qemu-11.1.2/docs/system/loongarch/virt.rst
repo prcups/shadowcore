@@ -95,3 +95,37 @@ Note: the initrd file is ramdisk
       -serial stdio   -monitor telnet:localhost:4495,server,nowait \
       -append "root=/dev/ram rdinit=/sbin/init console=ttyS0,115200" \
       --nographic
+
+Shadowcore S3 platform
+---------------------
+
+The derived ``shadowcore-test`` machine advertises ACPI ``_S3``. Its LoongArch
+platform implements the standard Sleep Control/Status registers at the GED
+register address; the generic GED code is unchanged. Ordinary ``virt`` keeps
+its existing sleep state declarations. This platform interface requires matching guest suspend
+support; it does not by itself coordinate Linux CPU hotplug.
+
+The first CPU is the little boot/management CPU. The remaining sixteen CPU
+slots describe eight big SMT2 cores. ACPI UID, hardware ID and role properties
+identify the CPUs; the default Linux numbering is CPU0 for the manager and
+CPU1--CPU16 for the big threads.
+
+Writing SLP_TYP=3 with SLP_EN set in the ACPI Sleep Control register suspends
+the VM through QEMU's standard suspend framework. Memory and the execution
+context of the management CPU survive. CPUs powered off by the guest remain
+in the Shadowcore OFF state until the guest issues CPU_ON.
+
+After QMP ``query-status`` reports ``suspended``, either ``system_wakeup`` or
+``system_powerdown`` resumes the platform. A wakeup notifier sets WAK_STS
+(bit 7) in the ACPI Sleep Status register before guest execution resumes.
+WAK_STS is cleared by writing one. A powerdown request received during S3 is
+consumed as a wake request and does not enqueue a second power-button event.
+Powerdown requests received while running retain their usual GED semantics.
+
+A GED event already latched at S3 entry causes immediate return with WAK_STS
+set. Guest memory and manager execution context are retained without a firmware
+reset on wakeup. Other CPUs use the Shadowcore CPU_OFF/CPU_ON protocol defined
+by the matching Linux driver; they must not resume their previous contexts.
+No private Shadowcore wake register or host doorbell is used. USB, RTC and
+network events are not connected to this platform wake mechanism, and
+Shadowcore VM migration remains unsupported.

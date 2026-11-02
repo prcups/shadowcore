@@ -7,6 +7,7 @@ loongarch_ss.add(when: 'CONFIG_LOONGARCH_VIRT', if_true: files(
   'virt-fdt-build.c',
   'virt.c',
   'shadowcore.c',
+  'shadowcore-s3.c',
   'shadowcore-machine.c'))
 loongarch_ss.add(when: 'CONFIG_ACPI', if_true: files('virt-acpi-build.c', 'shadowcore-acpi.c'))
 

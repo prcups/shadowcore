@@ -11,6 +11,7 @@ struct cpumask;
 
 #ifdef CONFIG_LOONGARCH_SHADOWCORE
 void __init shadowcore_early_init(void);
+void __init shadowcore_smp_init(void);
 const struct cpumask *shadowcore_task_cpus(struct task_struct *task);
 const struct cpumask *shadowcore_fallback_cpus(struct task_struct *task);
 int shadowcore_irq_target(void);
@@ -24,6 +25,7 @@ bool shadowcore_cpu_is_manager(unsigned int cpu);
 bool shadowcore_cpu_hotplug_protected(unsigned int cpu);
 #else
 static inline void shadowcore_early_init(void) { }
+static inline void shadowcore_smp_init(void) { }
 static inline int shadowcore_irq_target(void) { return -1; }
 static inline int shadowcore_cpu_off(unsigned int cpu) { return -ENODEV; }
 static inline int shadowcore_cpu_on(unsigned int cpu, unsigned long entry)

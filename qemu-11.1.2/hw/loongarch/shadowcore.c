@@ -368,8 +368,7 @@ void virt_shadowcore_init(LoongArchVirtMachineState *lvms)
     s->machine = lvms;
     s->manager = -1;
     for (i = 0; i < cpus->len; i++) {
-        bool little = cpus->cpus[i].props.cluster_id !=
-                      cpus->cpus[0].props.cluster_id;
+        bool little = cpus->cpus[i].props.cluster_id == SHADOWCORE_LITTLE_CLUSTER;
         uint32_t *r = s->records[i];
 
         r[0] = i;

@@ -36,13 +36,13 @@ void virt_shadowcore_pptt(GArray *data, BIOSLinker *linker,
         core = processor(data, start, 1 << 4, cluster, 0);
         for (thread = 0; thread < 2; thread++) {
             processor(data, start, (1 << 1) | (1 << 2) | (1 << 3),
-                      core, i * 2 + thread);
+                      core, SHADOWCORE_FIRST_BIG_SLOT + i * 2 + thread);
         }
     }
     cluster = processor(data, start, 1 << 4, package, 0);
     /* Single-threaded core is itself the ID-valid leaf, not an SMT thread. */
     processor(data, start, (1 << 1) | (1 << 3), cluster,
-              SHADOWCORE_BIG_THREADS);
+              SHADOWCORE_MANAGER_SLOT_ID);
     acpi_table_end(linker, &table);
 }
 
@@ -60,7 +60,7 @@ void virt_shadowcore_control_table(GArray *data, BIOSLinker *linker,
                                   LoongArchVirtMachineState *lvms)
 {
     const CPUArchIdList *cpus = MACHINE_GET_CLASS(lvms)->possible_cpu_arch_ids(MACHINE(lvms));
-    unsigned manager = SHADOWCORE_BIG_THREADS;
+    unsigned manager = SHADOWCORE_MANAGER_SLOT_ID;
     AcpiTable table = { .sig = "SHCT", .rev = 1,
         .oem_id = lvms->oem_id, .oem_table_id = lvms->oem_table_id };
 
@@ -123,7 +123,7 @@ void virt_shadowcore_dsdt(Aml *dsdt, LoongArchVirtMachineState *lvms)
                                       SHADOWCORE_MMIO_SIZE, AML_READ_WRITE));
     aml_append(dev, aml_name_decl("_CRS", crs));
     for (i = 0; i < cpus->len; i++) {
-        bool little = i == SHADOWCORE_BIG_THREADS;
+        bool little = cpus->cpus[i].props.cluster_id == SHADOWCORE_LITTLE_CLUSTER;
 
         aml_append(uids, aml_int(i));
         aml_append(hwids, aml_int(cpus->cpus[i].arch_id));
@@ -137,7 +137,7 @@ void virt_shadowcore_dsdt(Aml *dsdt, LoongArchVirtMachineState *lvms)
     property(props, "shadowcore,abi-version", aml_int(SHADOWCORE_ABI_VERSION));
     property(props, "shadowcore,capabilities", aml_int(SHADOWCORE_CAPABILITIES));
     property(props, "shadowcore,cpu-count", aml_int(cpus->len));
-    property(props, "shadowcore,manager-uid", aml_int(SHADOWCORE_BIG_THREADS));
+    property(props, "shadowcore,manager-uid", aml_int(SHADOWCORE_MANAGER_SLOT_ID));
     property(props, "shadowcore,cpu-uids", uids);
     property(props, "shadowcore,hw-ids", hwids);
     property(props, "shadowcore,core-ids", cores);

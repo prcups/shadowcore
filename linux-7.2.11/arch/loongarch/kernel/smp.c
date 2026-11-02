@@ -755,6 +755,7 @@ asmlinkage void start_secondary(void)
 
 void __init smp_cpus_done(unsigned int max_cpus)
 {
+	shadowcore_smp_init();
 }
 
 static void stop_this_cpu(void *dummy)
