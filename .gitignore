@@ -1,6 +1,3 @@
 # Local build products and temporary experiment output.
-linux-7.2.11/build/
-qemu-11.1.2/build/
-rootfs.img
 *.kdev4
 .kdev4/
